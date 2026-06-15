@@ -228,8 +228,9 @@ Rectangle {
 
     function zoomByWheel(wheel) {
         if (wheel.modifiers & Qt.AltModifier) {
-            // Alt+wheel = zoom the timeline (Premiere-style).
-            root.wheelAccumulatedDelta += wheel.angleDelta.y;
+            // Alt+wheel = zoom the timeline (Premiere-style). With Alt held, platforms
+            // deliver the wheel delta on angleDelta.x instead of .y, so use whichever is set.
+            root.wheelAccumulatedDelta += (wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x);
             if (root.wheelAccumulatedDelta >= defaultDeltasPerStep) {
                 root.zoomIn(true);
                 root.wheelAccumulatedDelta = 0;
