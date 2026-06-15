@@ -1357,6 +1357,10 @@ function getTrackColor(audio, header) {
             height: root.height
             x: root.headerWidth
             property bool shiftPress: false
+            // True when a left-press started in the empty track area with a select-like
+            // tool (no shift): that begins a Premiere-style rubber-band drag instead of
+            // moving the playhead. Reset on release.
+            property bool rubberPress: false
             // This provides continuous scrubbing and scimming at the left/right edges.
             hoverEnabled: true
             preventStealing: true
@@ -1388,6 +1392,7 @@ function getTrackColor(audio, header) {
             onPressed: mouse => {
                 focus = true
                 shiftPress = (mouse.modifiers & Qt.ShiftModifier) && (mouse.y > ruler.height) && !(mouse.modifiers & Qt.AltModifier)
+                rubberPress = false
                 let selectLikeTool = K.Core.activeTool === K.ToolType.SelectTool || K.Core.activeTool === K.ToolType.RippleTool
                 if (mouse.buttons === Qt.MiddleButton || (selectLikeTool && (mouse.modifiers & Qt.ControlModifier) && !shiftPress)) {
                     clickX = mouseX
@@ -1492,8 +1497,20 @@ function getTrackColor(audio, header) {
                         }
                     } else if (selectLikeTool || mouse.y <= ruler.height) {
                         if (mouse.y > ruler.height) {
+                            // Premiere-style: a left-click/drag in the empty track area starts a
+                            // rubber-band selection instead of jumping the playhead. (Clicking a
+                            // clip is handled by the clip's own mouse area / dragProxy above.) The
+                            // playhead only moves when clicking the ruler (the else-if below).
                             root.controller.requestClearSelection();
-                            root.proxy.position = Math.min((scrollView.contentX + mouse.x) / root.timeScale, root.timeline.fullDuration - 1)
+                            rubberSelect.x = mouse.x + scrollView.contentX
+                            rubberSelect.y = mouse.y - ruler.height + scrollView.contentY
+                            rubberSelect.clickX = rubberSelect.x
+                            rubberSelect.clickY = rubberSelect.y
+                            rubberSelect.originX = rubberSelect.clickX
+                            rubberSelect.originY = rubberSelect.clickY
+                            rubberSelect.width = 0
+                            rubberSelect.height = 0
+                            tracksArea.rubberPress = true
                         } else if (mouse.y > ruler.guideLabelHeight) {
                             root.proxy.position = Math.min((scrollView.contentX + mouse.x) / root.timeScale, root.timeline.fullDuration - 1)
                         }
@@ -1613,7 +1630,7 @@ function getTrackColor(audio, header) {
                     }
                 }
                 ruler.showZoneLabels = mouse.y < ruler.height
-                if (shiftPress && mouse.buttons === Qt.LeftButton && selectLikeTool && !rubberSelect.visible && rubberSelect.y > 0) {
+                if ((shiftPress || tracksArea.rubberPress) && mouse.buttons === Qt.LeftButton && selectLikeTool && !rubberSelect.visible && rubberSelect.y > 0) {
                     // rubber selection, check if mouse move was enough
                     var dx = rubberSelect.originX - (mouseX + scrollView.contentX)
                     var dy = rubberSelect.originY - (mouseY - ruler.height + scrollView.contentY)
@@ -1640,7 +1657,9 @@ function getTrackColor(audio, header) {
                     }
                     root.continuousScrolling(newX, newY)
                 } else if ((pressedButtons & Qt.LeftButton) && (!shiftPress || root.spacerGuides)) {
-                    if (selectLikeTool || (mouse.y < ruler.height && K.Core.activeTool !== K.ToolType.SlipTool && (K.Core.activeTool !== K.ToolType.SpacerTool || root.spacerGroup == -1))) {
+                    if ((selectLikeTool && !tracksArea.rubberPress) || (mouse.y < ruler.height && K.Core.activeTool !== K.ToolType.SlipTool && (K.Core.activeTool !== K.ToolType.SpacerTool || root.spacerGroup == -1))) {
+                        // select-tool drag scrubs the playhead only when the press began in the
+                        // ruler (rubberPress=false); a track-area press does a rubber-band instead.
                         root.proxy.position = Math.max(0, Math.min((scrollView.contentX + mouse.x) / root.timeScale, root.timeline.fullDuration - 1))
                     } else if (K.Core.activeTool === K.ToolType.SpacerTool && root.spacerGroup > -1) {
                         // Spacer tool, move group
@@ -1675,6 +1694,7 @@ function getTrackColor(audio, header) {
                 }
             }
             onCanceled: {
+                tracksArea.rubberPress = false
                 if (isCursorHidden) {
                     root.timeline.hideCursor(false)
                     isCursorHidden = false
@@ -1682,6 +1702,7 @@ function getTrackColor(audio, header) {
                 }
             }
             onReleased: mouse => {
+                tracksArea.rubberPress = false
                 tracksArea.isWarping = false
                 if (tracksArea.isCursorHidden) {
                     root.timeline.hideCursor(false)
