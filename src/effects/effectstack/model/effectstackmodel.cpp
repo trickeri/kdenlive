@@ -2236,6 +2236,11 @@ void EffectStackModel::setBuildInSize(const QSize size)
 
 void EffectStackModel::setBuiltInTransform(int x, int y, int w, int h)
 {
+    setBuiltInRect(QStringLiteral("0=%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h));
+}
+
+void EffectStackModel::setBuiltInRect(const QString &rectKeyframes)
+{
     plugBuiltinEffects();
     if (!rootItem) {
         return;
@@ -2254,8 +2259,10 @@ void EffectStackModel::setBuiltInTransform(int x, int y, int w, int h)
             // groupedCommand=true: skip the built-in auto-disable-on-default logic in
             // AssetParameterModel::setParameter, which would otherwise disable the qtblend
             // transform and collapse the clip back to the project-fit (tiny) rendering.
+            // rect is an animatedrect "X Y W H Opacity"; a multi-keyframe string
+            // (e.g. "0=.. 1;150=.. 0") animates opacity for banner fades.
             effect->setParameter(QStringLiteral("distort"), QStringLiteral("0"), false, QModelIndex(), true);
-            effect->setParameter(QStringLiteral("rect"), QStringLiteral("0=%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h), true, QModelIndex(), true);
+            effect->setParameter(QStringLiteral("rect"), rectKeyframes, true, QModelIndex(), true);
             return;
         }
     }

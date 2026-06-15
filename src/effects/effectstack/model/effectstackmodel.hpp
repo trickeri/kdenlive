@@ -184,6 +184,9 @@ public Q_SLOTS:
     void setBuildInSize(const QSize size);
     /** @brief Set the built-in qtblend transform to an explicit rect (Nuldrums scripting). */
     void setBuiltInTransform(int x, int y, int w, int h);
+    /** @brief Set the built-in qtblend rect to a raw (possibly keyframed) animatedrect
+     *  string, e.g. "0=x y w h 1;150=x y w h 0" for an opacity fade (Nuldrums scripting). */
+    void setBuiltInRect(const QString &rectKeyframes);
 
 protected:
     /** @brief Register the existence of a new element

@@ -40,12 +40,23 @@ public Q_SLOTS:
     Q_SCRIPTABLE QString clipIdsOnTrack(int videoTrackIndex);
     /** @brief Set a timeline clip's transform rect (x, y, w, h in project pixels). */
     Q_SCRIPTABLE bool setClipTransform(int clipId, int x, int y, int w, int h);
+    /** @brief Resize a timeline clip to durationFrames (extends/trims its right edge).
+     *  Used to stretch a short banner still to a chosen on-screen duration. */
+    Q_SCRIPTABLE bool resizeClip(int clipId, int durationFrames);
+    /** @brief Set a banner clip's rect + an opacity fade via its built-in qtblend.
+     *  fadeInFrames ramps opacity 0->1 at the clip start; fadeOutFrames ramps 1->0 at
+     *  the clip end (0 disables either). Position/size stay fixed at x,y,w,h. */
+    Q_SCRIPTABLE bool setClipFade(int clipId, int x, int y, int w, int h, int fadeInFrames, int fadeOutFrames);
     /** @brief Save the current project-monitor frame (composited) to a PNG path, for visual verification. */
     Q_SCRIPTABLE void renderFrame(const QString &path);
     /** @brief Toggle play/pause on the active monitor. */
     Q_SCRIPTABLE void playPause();
     /** @brief Seek the project monitor to an absolute frame position. */
     Q_SCRIPTABLE void seek(int position);
+    /** @brief Create a new project from scratch with the given MLT profile path
+     *  (e.g. /usr/share/mlt-7/profiles/vertical_hd_30 for Vertical HD 30fps) and
+     *  save it to savePath. No dialogs. Returns true on success. */
+    Q_SCRIPTABLE bool newProject(const QString &profilePath, const QString &savePath);
     /** @brief Save the current project. Returns true on success. */
     Q_SCRIPTABLE bool save();
     /** @brief Cleanly shut down Kdenlive (prompt-free; removes the crash lock). Call save() first if needed. */

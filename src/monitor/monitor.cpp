@@ -202,6 +202,47 @@ Monitor::Monitor(Kdenlive::MonitorId id, MonitorManager *manager, QWidget *paren
     connect(m_qmlManager, &QmlManager::activateTrack, this, [&](int ix) { Q_EMIT activateTrack(ix, false); });
 
     glayout->addWidget(m_glMonitor, 0, 0);
+
+    // Premiere-style zoom selector floating in the top-left corner of the monitor
+    // view. m_zoom == 1.0 is the default fit-to-window view; values < 1 zoom out,
+    // > 1 zoom in. Overlaid in the same grid cell as the GL view (added after it so
+    // it paints on top — works because VideoWidget is a QQuickWidget).
+    auto *zoomCombo = new QComboBox(m_glWidget);
+    zoomCombo->setEditable(true);
+    zoomCombo->setInsertPolicy(QComboBox::NoInsert);
+    zoomCombo->setFocusPolicy(Qt::ClickFocus);
+    zoomCombo->addItem(i18n("Fit"), 1.0);
+    for (double r : {0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 4.0}) {
+        zoomCombo->addItem(QStringLiteral("%1%").arg(int(r * 100)), r);
+    }
+    zoomCombo->setToolTip(i18n("Monitor zoom (Fit = whole frame)"));
+    zoomCombo->setMaximumWidth(QFontMetrics(zoomCombo->font()).horizontalAdvance(QStringLiteral("8000%")) + 40);
+    zoomCombo->setStyleSheet(QStringLiteral("QComboBox{background:rgba(0,0,0,150);color:white;border:1px solid rgba(255,255,255,70);"
+                                            "border-radius:3px;padding:1px 4px;margin:4px;}"));
+    glayout->addWidget(zoomCombo, 0, 0, Qt::AlignTop | Qt::AlignRight);
+    connect(zoomCombo, &QComboBox::textActivated, this, [this](const QString &text) {
+        QString t = text.trimmed();
+        double ratio;
+        if (t.compare(i18n("Fit"), Qt::CaseInsensitive) == 0) {
+            ratio = 1.0;
+        } else {
+            t.remove(QLatin1Char('%'));
+            bool ok = false;
+            const double pct = t.toDouble(&ok);
+            if (!ok || pct <= 0) {
+                return;
+            }
+            ratio = pct / 100.0;
+        }
+        m_glMonitor->setZoom(float(qBound(0.2, ratio, 20.0)), true);
+    });
+    // Reflect the live zoom (including Ctrl+wheel changes) back into the selector.
+    connect(m_glMonitor, &VideoWidget::zoomChanged, this, [this, zoomCombo]() {
+        const int pct = qRound(m_glMonitor->zoom() * 100.0);
+        QSignalBlocker bl(zoomCombo);
+        zoomCombo->setEditText(pct == 100 ? i18n("Fit") : QStringLiteral("%1%").arg(pct));
+    });
+
     m_verticalScroll = new QScrollBar(Qt::Vertical);
     glayout->addWidget(m_verticalScroll, 0, 1);
     m_verticalScroll->hide();

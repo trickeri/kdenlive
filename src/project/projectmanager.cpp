@@ -30,6 +30,8 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <bin/clipcreator.hpp>
 #include <lib/localeHandling.h>
 
+#include <fstream>
+
 // Temporary for testing
 #include "bin/model/markerlistmodel.hpp"
 
@@ -290,6 +292,29 @@ void ProjectManager::newFile(QString profileName, bool showProjectSettings)
         pCore->monitorManager()->projectMonitor()->setProducer(m_activeTimelineModel->uuid(), m_activeTimelineModel->producer(), 0);
         const QUuid uuid = m_project->activeUuid;
         pCore->monitorManager()->projectMonitor()->adjustRulerSize(m_activeTimelineModel->duration() - 1, m_project->getFilteredGuideModel(uuid));
+        // The project monitor's GL widget is often not yet mapped/sized while the
+        // document is opening, so the very first frame renders into an unready (or
+        // zero-sized) viewport and nothing ever re-renders it — the classic "blank
+        // project monitor until you switch monitor tabs" bug. Once the event loop
+        // has shown and laid out the monitor, force the same refresh that flipping
+        // tabs performs (slotTemporaryActivateMonitor + glMonitor->refresh()).
+        // The project monitor's GL widget is often not yet mapped/visible while the
+        // document is opening, so the consumer never starts (Monitor::start() bails
+        // on !isVisible()) and the monitor stays blank until the user flips monitor
+        // tabs — the classic "blank project monitor on open" bug. Once the event loop
+        // has shown the monitor, (re)activate it, start the consumer, and refresh.
+        // Retry a few times to cover slow window mapping during app startup.
+        Monitor *projMon = pCore->monitorManager()->projectMonitor();
+        for (int delay : {150, 500, 1200}) {
+            QTimer::singleShot(delay, projMon, [projMon, delay]() {
+                std::ofstream f("/tmp/kdenlive-openrefresh.log", std::ios::app);
+                f << "[open+" << delay << "ms] visible=" << projMon->isVisible() << " active=" << projMon->isActive() << '\n';
+                pCore->monitorManager()->activateMonitor(Kdenlive::ProjectMonitor);
+                projMon->start();
+                projMon->refreshMonitor(true);
+                f << "           -> after start+refresh, active=" << projMon->isActive() << '\n';
+            });
+        }
     }
     clearLockFile();
 }

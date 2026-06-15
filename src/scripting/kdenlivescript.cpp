@@ -208,6 +208,69 @@ bool KdenliveScript::setClipTransform(int clipId, int x, int y, int w, int h)
     return true;
 }
 
+bool KdenliveScript::resizeClip(int clipId, int durationFrames)
+{
+    nlog(QStringLiteral("resizeClip(clip=%1, frames=%2)").arg(clipId).arg(durationFrames));
+    if (!pCore || !pCore->currentDoc()) {
+        return false;
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline || !timeline->isClip(clipId)) {
+        nlog(QStringLiteral("resizeClip: invalid clip id %1").arg(clipId));
+        return false;
+    }
+    // Resize the right edge to the requested duration (snapDistance=-1 disables snapping).
+    const int result = timeline->requestItemResize(clipId, durationFrames, true, true, -1, true);
+    nlog(QStringLiteral("resizeClip: requestItemResize -> %1").arg(result));
+    return result > -1;
+}
+
+bool KdenliveScript::setClipFade(int clipId, int x, int y, int w, int h, int fadeInFrames, int fadeOutFrames)
+{
+    nlog(QStringLiteral("setClipFade(clip=%1, rect=%2 %3 %4 %5, in=%6, out=%7)").arg(clipId).arg(x).arg(y).arg(w).arg(h).arg(fadeInFrames).arg(fadeOutFrames));
+    if (!pCore || !pCore->currentDoc()) {
+        return false;
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline || !timeline->isClip(clipId)) {
+        nlog(QStringLiteral("setClipFade: invalid clip id %1").arg(clipId));
+        return false;
+    }
+    const int dur = timeline->getClipPlaytime(clipId);
+    if (dur < 2) {
+        nlog(QStringLiteral("setClipFade: clip too short (dur=%1)").arg(dur));
+        return false;
+    }
+    // Build a keyframed animatedrect: position/size constant, opacity ramped at the edges.
+    QString kf;
+    auto add = [&](int frame, double opacity) {
+        if (!kf.isEmpty()) {
+            kf += QLatin1Char(';');
+        }
+        kf += QStringLiteral("%1=%2 %3 %4 %5 %6").arg(frame).arg(x).arg(y).arg(w).arg(h).arg(opacity, 0, 'f', 3);
+    };
+    const int fin = qBound(0, fadeInFrames, dur - 1);
+    const int fout = qBound(0, fadeOutFrames, dur - 1);
+    if (fin > 0) {
+        add(0, 0.0);
+        add(fin, 1.0);
+    } else {
+        add(0, 1.0);
+    }
+    if (fout > 0) {
+        add(qMax(fin, dur - 1 - fout), 1.0);
+        add(dur - 1, 0.0);
+    }
+    nlog(QStringLiteral("setClipFade: rect keyframes = %1").arg(kf));
+    std::shared_ptr<EffectStackModel> stack = timeline->getClipEffectStack(clipId);
+    if (!stack) {
+        nlog(QStringLiteral("setClipFade: no effect stack for clip %1").arg(clipId));
+        return false;
+    }
+    stack->setBuiltInRect(kf);
+    return true;
+}
+
 void KdenliveScript::renderFrame(const QString &path)
 {
     nlog(QStringLiteral("renderFrame('%1')").arg(path));
@@ -231,6 +294,26 @@ void KdenliveScript::seek(int position)
     if (pCore->monitorManager() && pCore->monitorManager()->projectMonitor()) {
         pCore->monitorManager()->projectMonitor()->requestSeek(position);
     }
+}
+
+bool KdenliveScript::newProject(const QString &profilePath, const QString &savePath)
+{
+    nlog(QStringLiteral("newProject(profile='%1', save='%2')").arg(profilePath, savePath));
+    if (!pCore || !pCore->projectManager()) {
+        nlog(QStringLiteral("newProject: no projectManager"));
+        return false;
+    }
+    // Create a fresh project with the requested profile, skipping the settings dialog
+    // (false == don't show ProjectSettings). Equivalent to File > New + picking the preset.
+    pCore->projectManager()->newFile(profilePath, false);
+    if (!pCore->currentDoc()) {
+        nlog(QStringLiteral("newProject: no document after newFile"));
+        return false;
+    }
+    // Persist it to the requested path (save over any existing file, not a copy).
+    const bool ok = pCore->projectManager()->saveFileAs(savePath, true, false);
+    nlog(QStringLiteral("newProject: saveFileAs('%1') -> %2").arg(savePath).arg(ok));
+    return ok;
 }
 
 bool KdenliveScript::save()
