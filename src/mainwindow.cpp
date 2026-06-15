@@ -2227,6 +2227,8 @@ void MainWindow::setupActions()
               QIcon::fromTheme(QStringLiteral("document-import")));
     addAction(QStringLiteral("export_subtitle"), i18n("Export Subtitle File…"), this, SLOT(slotExportSubtitle()),
               QIcon::fromTheme(QStringLiteral("document-export")));
+    addAction(QStringLiteral("generate_karaoke_captions"), i18n("Generate Karaoke Captions"), this, SLOT(slotGenerateKaraokeCaptions()),
+              QIcon::fromTheme(QStringLiteral("add-subtitle")));
     addAction(QStringLiteral("delete_subtitle_clip"), i18n("Delete Subtitle"), this, SLOT(slotDeleteItem()), QIcon::fromTheme(QStringLiteral("edit-delete")));
     addAction(QStringLiteral("audio_recognition"), i18n("Speech Recognition…"), this, SLOT(slotSpeechRecognition()),
               QIcon::fromTheme(QStringLiteral("autocorrection")));
@@ -5187,6 +5189,71 @@ void MainWindow::slotEditSubtitle(const QMap<QString, QString> &subProperties)
         KdenliveSettings::setShowSubtitles(m_buttonSubtitleEditTool->isChecked());
         getCurrentTimeline()->connectSubtitleModel(false);
     }
+}
+
+void MainWindow::slotGenerateKaraokeCaptions()
+{
+    // NulCaption: word-by-word karaoke captions for the selected clip.
+    // The MIT `nulcaption` CLI (whisper.cpp Vulkan -> Kdenlive-native karaoke ASS) is
+    // run as a subprocess; the result is imported onto the subtitle track (Path A),
+    // reusing the same machinery as built-in speech-to-text (see SpeechDialog).
+    // Works from both the timeline clip menu (selected timeline clip -> its bin clip)
+    // and the Project Bin menu (selected bin clip).
+    QString src;
+    if (TimelineWidget *tl = getCurrentTimeline()) {
+        int clipId = tl->controller()->getMainSelectedClip();
+        if (clipId > -1) {
+            std::shared_ptr<ProjectClip> binClip = pCore->bin()->getBinClip(tl->model()->getClipBinId(clipId));
+            if (binClip) {
+                src = binClip->url();
+            }
+        }
+    }
+    if (src.isEmpty()) {
+        std::shared_ptr<ProjectClip> clip = pCore->bin()->getFirstSelectedClip();
+        if (clip) {
+            src = clip->url();
+        }
+    }
+    if (src.isEmpty()) {
+        pCore->displayMessage(i18n("Select an audio or video clip first"), ErrorMessage);
+        return;
+    }
+    const QString assOut = QDir::temp().absoluteFilePath(QStringLiteral("nulcaption-%1.ass").arg(qHash(src)));
+
+    // Ensure a subtitle track exists and is shown (reuses Kdenlive's own path).
+    if (!getCurrentTimeline()->hasSubtitles()) {
+        slotEditSubtitle();
+    }
+
+    auto *job = new QProcess(this);
+    job->setProcessChannelMode(QProcess::MergedChannels);
+    connect(job, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this,
+            [this, job, assOut](int exitCode, QProcess::ExitStatus exitStatus) {
+                // OperationCompletedMessage clears the ProcessingJobMessage progress
+                // indicator (a plain InformationMessage does not — it leaves the spinner).
+                if (exitStatus == QProcess::NormalExit && exitCode == 0 && QFile::exists(assOut)) {
+                    // Karaoke override tags + the style survive the importer
+                    // (verified against SubtitleModel::importSubtitle / saveSubtitleData).
+                    getCurrentTimeline()->model()->getSubtitleModel()->importSubtitle(assOut, 0, true);
+                    pCore->displayMessage(i18n("Karaoke captions added to subtitle track"), OperationCompletedMessage);
+                } else {
+                    pCore->displayMessage(QString(), OperationCompletedMessage); // dismiss the progress spinner
+                    pCore->displayMessage(i18n("Caption generation failed: %1", QString::fromUtf8(job->readAll())), ErrorMessage);
+                }
+                QFile::remove(assOut);
+                job->deleteLater();
+            });
+    // media -> per-word timings (whisper.cpp Vulkan, large-v3-turbo) -> Kdenlive-native karaoke ASS.
+    // pop preset = per-word highlight (the spoken word switches to the highlight colour).
+    job->start(QStringLiteral("nulcaption"), {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--preset"), QStringLiteral("pop"),
+                                              QStringLiteral("--ass"), assOut});
+    if (!job->waitForStarted(3000)) {
+        pCore->displayMessage(i18n("Could not start 'nulcaption' — is it installed and on PATH? (run nulcaption-setup once)"), ErrorMessage);
+        job->deleteLater();
+        return;
+    }
+    pCore->displayMessage(i18n("Generating karaoke captions…"), ProcessingJobMessage);
 }
 
 void MainWindow::slotAddSubtitle(const QString &text)

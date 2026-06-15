@@ -403,6 +403,8 @@ public Q_SLOTS:
     void slotInitSubtitle(const QMap<QString, QString> &subProperties, const QUuid &uuid);
     /** @brief Display the subtitle track and initialize subtitleModel if necessary. */
     void slotEditSubtitle(const QMap<QString, QString> &subProperties = {});
+    /** @brief Generate word-by-word karaoke captions for the selected bin clip (NulCaption). */
+    void slotGenerateKaraokeCaptions();
     /** @brief Show/hide subtitle track. */
     void slotShowSubtitles(bool show);
     void slotTranscode(const QStringList &urls = QStringList());

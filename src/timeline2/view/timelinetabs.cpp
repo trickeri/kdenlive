@@ -402,6 +402,10 @@ void TimelineTabs::buildClipMenu()
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("clip_in_project_tree")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("cut_timeline_clip")));
     m_timelineClipMenu->addAction(coll->action(QStringLiteral("replace_timeline_clip")));
+    // NulCaption: generate word-by-word karaoke captions from this clip's audio.
+    if (QAction *karaokeAction = coll->action(QStringLiteral("generate_karaoke_captions"))) {
+        m_timelineClipMenu->addAction(karaokeAction);
+    }
 }
 
 void TimelineTabs::setTimelineMenu(QMenu *compositionMenu, QMenu *timelineMenu, QMenu *guideMenu, QMenu *timelineRulerMenu, QAction *editGuideAction,
