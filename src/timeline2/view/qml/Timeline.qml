@@ -228,15 +228,8 @@ Rectangle {
 
     function zoomByWheel(wheel) {
         if (wheel.modifiers & Qt.AltModifier) {
-            // Seek to next snap
-            if (wheel.angleDelta.x > 0) {
-                K.Core.triggerAction('monitor_seek_snap_backward')
-            } else {
-                K.Core.triggerAction('monitor_seek_snap_forward')
-            }
-        } else if (wheel.modifiers & Qt.ControlModifier) {
+            // Alt+wheel = zoom the timeline (Premiere-style).
             root.wheelAccumulatedDelta += wheel.angleDelta.y;
-            // Zoom
             if (root.wheelAccumulatedDelta >= defaultDeltasPerStep) {
                 root.zoomIn(true);
                 root.wheelAccumulatedDelta = 0;
@@ -244,6 +237,9 @@ Rectangle {
                 root.zoomOut(true);
                 root.wheelAccumulatedDelta = 0;
             }
+        } else if (wheel.modifiers & Qt.ControlModifier) {
+            // Ctrl+wheel = pan the timeline left/right (Premiere-style).
+            horizontalScroll(wheel)
         } else if (wheel.modifiers & Qt.ShiftModifier) {
             if (K.KdenliveSettings.scrollvertically || rubberSelect.visible) {
                 horizontalScroll(wheel)
@@ -1386,12 +1382,8 @@ function getTrackColor(audio, header) {
                 }
             }
             onWheel: wheel => {
-                if (wheel.modifiers & Qt.ControlModifier) {
-                    // Premiere-style: Ctrl+wheel pans the timeline left/right.
-                    root.horizontalScroll(wheel)
-                    wheel.accepted = true
-                } else if (wheel.modifiers & Qt.AltModifier || mouseY > trackHeaders.height) {
-                    // Alt+wheel zooms the timeline (Premiere-style).
+                if (wheel.modifiers & Qt.AltModifier || wheel.modifiers & Qt.ControlModifier || mouseY > trackHeaders.height) {
+                    // Alt = zoom, Ctrl = pan (handled inside zoomByWheel, the shared dispatcher).
                     root.zoomByWheel(wheel)
                 } else if (K.Core.activeTool !== K.ToolType.SlipTool) {
                     var delta = wheel.modifiers & Qt.ShiftModifier ? K.Core.getCurrentFps() : 1
