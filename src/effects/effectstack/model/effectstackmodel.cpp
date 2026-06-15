@@ -2237,9 +2237,16 @@ void EffectStackModel::setBuildInSize(const QSize size)
 void EffectStackModel::setBuiltInTransform(int x, int y, int w, int h)
 {
     plugBuiltinEffects();
+    if (!rootItem) {
+        return;
+    }
     for (int i = 0; i < rootItem->childCount(); i++) {
-        std::shared_ptr<EffectItemModel> effect = std::static_pointer_cast<EffectItemModel>(rootItem->child(i));
-        if (effect->isBuiltIn() && effect->getAssetId() == QLatin1String("qtblend")) {
+        const std::shared_ptr<TreeItem> child = rootItem->child(i);
+        if (!child) {
+            continue;
+        }
+        std::shared_ptr<EffectItemModel> effect = std::static_pointer_cast<EffectItemModel>(child);
+        if (effect && effect->isBuiltIn() && effect->getAssetId() == QLatin1String("qtblend")) {
             effect->setAssetEnabled(true, true);
             // groupedCommand=true: skip the built-in auto-disable-on-default logic in
             // AssetParameterModel::setParameter, which would otherwise disable the qtblend

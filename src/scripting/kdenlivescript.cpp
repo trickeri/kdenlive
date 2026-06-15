@@ -159,6 +159,29 @@ int KdenliveScript::addClipToTrack(const QString &path, int videoTrackIndex, int
     return ok ? id : -14; // -14: requestClipInsertion failed
 }
 
+QString KdenliveScript::clipIdsOnTrack(int videoTrackIndex)
+{
+    if (!pCore || !pCore->currentDoc()) {
+        return QString();
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline) {
+        return QString();
+    }
+    QList<int> vids = timeline->getTracksIds(false);
+    if (videoTrackIndex < 1 || videoTrackIndex > vids.size()) {
+        return QString();
+    }
+    std::sort(vids.begin(), vids.end(), [&timeline](int a, int b) { return timeline->getTrackPosition(a) < timeline->getTrackPosition(b); });
+    const int trackId = vids.at(videoTrackIndex - 1);
+    QStringList ids;
+    for (int c : timeline->getItemsInRange(trackId, 0, -1, false)) { // clips only (no compositions)
+        ids << QString::number(c);
+    }
+    nlog(QStringLiteral("clipIdsOnTrack(%1) -> [%2]").arg(videoTrackIndex).arg(ids.join(QLatin1Char(','))));
+    return ids.join(QLatin1Char(','));
+}
+
 bool KdenliveScript::setClipTransform(int clipId, int x, int y, int w, int h)
 {
     nlog(QStringLiteral("setClipTransform(clip=%1, %2 %3 %4 %5)").arg(clipId).arg(x).arg(y).arg(w).arg(h));
@@ -169,6 +192,10 @@ bool KdenliveScript::setClipTransform(int clipId, int x, int y, int w, int h)
     std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
     if (!timeline) {
         nlog(QStringLiteral("setClipTransform: no timeline model"));
+        return false;
+    }
+    if (!timeline->isClip(clipId)) {
+        nlog(QStringLiteral("setClipTransform: %1 is not a valid clip id (likely stale after reload)").arg(clipId));
         return false;
     }
     std::shared_ptr<EffectStackModel> stack = timeline->getClipEffectStack(clipId);

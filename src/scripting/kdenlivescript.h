@@ -35,6 +35,9 @@ public Q_SLOTS:
     /** @brief Insert a bin clip (by source path) onto a video track (1-based from bottom)
      *  at a frame position. Returns the new timeline clip id, or -1 on failure. */
     Q_SCRIPTABLE int addClipToTrack(const QString &path, int videoTrackIndex, int position);
+    /** @brief Comma-separated clip ids on a video track (1-based from bottom). Always query this
+     *  for LIVE clip ids — they are reassigned when a project is reloaded. */
+    Q_SCRIPTABLE QString clipIdsOnTrack(int videoTrackIndex);
     /** @brief Set a timeline clip's transform rect (x, y, w, h in project pixels). */
     Q_SCRIPTABLE bool setClipTransform(int clipId, int x, int y, int w, int h);
     /** @brief Save the current project-monitor frame (composited) to a PNG path, for visual verification. */
