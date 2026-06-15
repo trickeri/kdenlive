@@ -2248,9 +2248,15 @@ void EffectStackModel::setBuiltInTransform(int x, int y, int w, int h)
         std::shared_ptr<EffectItemModel> effect = std::static_pointer_cast<EffectItemModel>(child);
         if (effect && effect->isBuiltIn() && effect->getAssetId() == QLatin1String("qtblend")) {
             effect->setAssetEnabled(true, true);
+            // distort=1: stretch the source to FILL the rect. With the default distort=0,
+            // qtblend fits the source to the rect maintaining aspect AND will not upscale,
+            // so a rect larger than the clip's native size leaves the video at native size
+            // with black padding inside the box. Our rects match the source aspect, so
+            // distort=1 fills with no actual distortion.
             // groupedCommand=true: skip the built-in auto-disable-on-default logic in
             // AssetParameterModel::setParameter, which would otherwise disable the qtblend
             // transform and collapse the clip back to the project-fit (tiny) rendering.
+            effect->setParameter(QStringLiteral("distort"), QStringLiteral("1"), false, QModelIndex(), true);
             effect->setParameter(QStringLiteral("rect"), QStringLiteral("0=%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h), true, QModelIndex(), true);
             return;
         }

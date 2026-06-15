@@ -83,7 +83,12 @@
     </entry>
     <entry name="keep_original_frame_size" type="Bool">
       <label>On clip import, add a Transform effect to keep the clip's original frame size.</label>
-      <default>true</default>
+      <!-- Nuldrums: default OFF. When on, this bakes a chain-level qtblend (native size) onto the
+           clip's producer that is applied BEFORE the timeline clip's own built-in Transform, so the
+           timeline Transform composites an already-letterboxed frame and can never fill the rect.
+           With it off (and enableBuiltInEffects on), the single timeline Transform operates on the
+           native source and can fill/crop cleanly. -->
+      <default>false</default>
     </entry>
     <entry name="exportframe_usingsourceres" type="Bool">
       <label>Export image using source resolution.</label>
@@ -466,7 +471,9 @@
 
     <entry name="enableBuiltInEffects" type="Bool">
       <label>Enable built-in effects.</label>
-      <default>false</default>
+      <!-- Nuldrums: default ON so every clip gets a single controllable built-in Transform
+           (needed for the scripting setClipTransform fill/crop workflow). See keep_original_frame_size. -->
+      <default>true</default>
     </entry>
 
     <entry name="tenbitpipeline" type="Bool">
