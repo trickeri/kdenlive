@@ -5281,11 +5281,11 @@ QColor TimelineController::getTimelineClipColor(ClipType::ProducerType type) con
 
 QColor TimelineController::selectionColor() const
 {
-    KColorScheme scheme(QApplication::palette().currentColorGroup(), KColorScheme::Complementary);
+    // Nuldrums: hot pink clip selection highlight (was scheme Complementary/NeutralText).
     if (m_model && m_model->singleSelectionMode()) {
-        return Qt::red;
+        return QColor(0xFF, 0x14, 0x93); // single-selection: hot pink
     }
-    return scheme.foreground(KColorScheme::NeutralText).color();
+    return QColor(0xFF, 0x14, 0x93); // multi-selection: hot pink
 }
 
 void TimelineController::switchRecording(int trackId, bool record)

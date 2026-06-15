@@ -353,7 +353,7 @@ Item {
         width: root.pendingFramesize.width * root.scalex
         height: root.pendingFramesize.height * root.scaley
         color: "transparent"
-        border.color: root.disableHandles ? 'transparent' : "#ff0000"
+        border.color: root.disableHandles ? 'transparent' : "#ff1493"
         x: frame.x + root.pendingFramesize.x * root.scalex
         y: frame.y + root.pendingFramesize.y * root.scaley
         transform: Rotation {
@@ -425,7 +425,7 @@ Item {
         height: root._framesize.height * root.scaley
         enabled: root.controller.isKeyframe || K.KdenliveSettings.autoKeyframe
         color: "transparent"
-        border.color: root.disableHandles ? 'transparent' : "#ff0000"
+        border.color: root.disableHandles ? 'transparent' : "#ff1493"
         opacity: (isMoving || isResizing || isRotating) ? 0 : 1
         onWidthChanged: root.updateRotationAnchor()
         onHeightChanged: root.updateRotationAnchor()
@@ -441,7 +441,7 @@ Item {
             anchors.fill: parent
             visible: root.disableHandles
             ShapePath {
-                strokeColor: 'red'
+                strokeColor: '#ff1493'
                 strokeWidth: 1
                 fillColor: 'transparent'
                 strokeStyle: ShapePath.DashLine
@@ -473,7 +473,7 @@ Item {
             anchors.fill: parent
             //visible: transformedFrame.isRotating
             ShapePath {
-                strokeColor: "red"
+                strokeColor: "#ff1493"
                 strokeWidth: 2
                 fillColor: "transparent"
                 // Circle using PathAngleArc
