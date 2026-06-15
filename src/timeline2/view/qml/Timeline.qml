@@ -230,12 +230,15 @@ Rectangle {
         if (wheel.modifiers & Qt.AltModifier) {
             // Alt+wheel = zoom the timeline (Premiere-style). With Alt held, platforms
             // deliver the wheel delta on angleDelta.x instead of .y, so use whichever is set.
-            root.wheelAccumulatedDelta += (wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x);
+            // Use a fine multiplicative step (~12% per notch, mouse-centered) instead of the
+            // coarse discrete comboScale levels, for smoother granularity.
+            var d = (wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.angleDelta.x)
+            root.wheelAccumulatedDelta += d;
             if (root.wheelAccumulatedDelta >= defaultDeltasPerStep) {
-                root.zoomIn(true);
+                root.timeline.setScaleFactorOnMouse(Math.min(root.timeScale * 1.12, 50), true)
                 root.wheelAccumulatedDelta = 0;
             } else if (root.wheelAccumulatedDelta <= -defaultDeltasPerStep) {
-                root.zoomOut(true);
+                root.timeline.setScaleFactorOnMouse(Math.max(root.timeScale / 1.12, 0.01), true)
                 root.wheelAccumulatedDelta = 0;
             }
         } else if (wheel.modifiers & Qt.ControlModifier) {
