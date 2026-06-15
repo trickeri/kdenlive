@@ -28,6 +28,17 @@ public Q_SLOTS:
     Q_SCRIPTABLE void addToTimeline(const QString &path);
     /** @brief Add an effect (by effect id) to the current selection. */
     Q_SCRIPTABLE void addEffect(const QString &effectId);
+    /** @brief Insert a new video track at the top. Returns the new track id, or -1. */
+    Q_SCRIPTABLE int addVideoTrack();
+    /** @brief Number of video tracks in the active timeline. */
+    Q_SCRIPTABLE int videoTrackCount();
+    /** @brief Insert a bin clip (by source path) onto a video track (1-based from bottom)
+     *  at a frame position. Returns the new timeline clip id, or -1 on failure. */
+    Q_SCRIPTABLE int addClipToTrack(const QString &path, int videoTrackIndex, int position);
+    /** @brief Set a timeline clip's transform rect (x, y, w, h in project pixels). */
+    Q_SCRIPTABLE bool setClipTransform(int clipId, int x, int y, int w, int h);
+    /** @brief Save the current project-monitor frame (composited) to a PNG path, for visual verification. */
+    Q_SCRIPTABLE void renderFrame(const QString &path);
     /** @brief Toggle play/pause on the active monitor. */
     Q_SCRIPTABLE void playPause();
     /** @brief Seek the project monitor to an absolute frame position. */

@@ -182,6 +182,8 @@ public Q_SLOTS:
     void moveEffectByRow(int destRow, int srcRow);
     /** @brief Set the size for the bin effect item */
     void setBuildInSize(const QSize size);
+    /** @brief Set the built-in qtblend transform to an explicit rect (Nuldrums scripting). */
+    void setBuiltInTransform(int x, int y, int w, int h);
 
 protected:
     /** @brief Register the existence of a new element

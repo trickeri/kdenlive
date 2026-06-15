@@ -2234,6 +2234,22 @@ void EffectStackModel::setBuildInSize(const QSize size)
     }
 }
 
+void EffectStackModel::setBuiltInTransform(int x, int y, int w, int h)
+{
+    plugBuiltinEffects();
+    for (int i = 0; i < rootItem->childCount(); i++) {
+        std::shared_ptr<EffectItemModel> effect = std::static_pointer_cast<EffectItemModel>(rootItem->child(i));
+        if (effect->isBuiltIn() && effect->getAssetId() == QLatin1String("qtblend")) {
+            effect->setAssetEnabled(true, true);
+            // groupedCommand=true: skip the built-in auto-disable-on-default logic in
+            // AssetParameterModel::setParameter, which would otherwise disable the qtblend
+            // transform and collapse the clip back to the project-fit (tiny) rendering.
+            effect->setParameter(QStringLiteral("rect"), QStringLiteral("0=%1 %2 %3 %4 1").arg(x).arg(y).arg(w).arg(h), true, QModelIndex(), true);
+            return;
+        }
+    }
+}
+
 bool EffectStackModel::hasDisabledBuiltInTransform()
 {
     plugBuiltinEffects();
