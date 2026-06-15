@@ -1174,7 +1174,10 @@
 
     <entry name="previewScaling" type="Int">
       <label>Divide monitor resolution by this factor to speedup preview.</label>
-      <default>1</default>
+      <!-- 0 = 1:1 full-resolution preview. The old default 1 ("1080p") caps preview
+           HEIGHT at 1080, which softens vertical 1080x1920 projects (rendered at 1080
+           tall then upscaled). 1:1 keeps the monitor render-sharp. -->
+      <default>0</default>
     </entry>
 
     <entry name="autoKeyframe" type="Bool">
