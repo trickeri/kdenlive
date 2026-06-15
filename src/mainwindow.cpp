@@ -1649,8 +1649,9 @@ void MainWindow::setupActions()
     addAction(QStringLiteral("insert_mode"), m_insertEditTool);
 
     KActionCategory *toolsActionCategory = new KActionCategory(i18n("Tools"), actionCollection());
-    addAction(QStringLiteral("select_tool"), m_buttonSelectTool, Qt::Key_S, toolsActionCategory);
-    addAction(QStringLiteral("razor_tool"), m_buttonRazorTool, Qt::Key_X, toolsActionCategory);
+    // Premiere-style tool shortcuts: V = selection, C = razor/blade (were S and X).
+    addAction(QStringLiteral("select_tool"), m_buttonSelectTool, Qt::Key_V, toolsActionCategory);
+    addAction(QStringLiteral("razor_tool"), m_buttonRazorTool, Qt::Key_C, toolsActionCategory);
     addAction(QStringLiteral("spacer_tool"), m_buttonSpacerTool, Qt::Key_M, toolsActionCategory);
     addAction(QStringLiteral("ripple_tool"), m_buttonRippleTool, {}, toolsActionCategory);
     // addAction(QStringLiteral("roll_tool"), m_buttonRollTool, QKeySequence(), toolsActionCategory);
@@ -1869,7 +1870,7 @@ void MainWindow::setupActions()
     overwriteZone->setWhatsThis(xi18nc("@info:whatsthis", "When clicked the zone of the clip currently selected in the project bin is inserted at the playhead "
                                                           "position in the active timeline. Clips at the insert position are cut and overwritten."));
     QAction *insertZone = addAction(QStringLiteral("insert_to_in_point"), i18n("Insert Clip Zone in Timeline"), this, SLOT(slotInsertClipInsert()),
-                                    QIcon::fromTheme(QStringLiteral("timeline-insert")), Qt::Key_V);
+                                    QIcon::fromTheme(QStringLiteral("timeline-insert")), Qt::Key_Comma); // was V, freed for the selection tool
     insertZone->setWhatsThis(xi18nc("@info:whatsthis", "When clicked the zone of the clip currently selected in the project bin is inserted at the playhead "
                                                        "position in the active timeline. Clips at the insert position are cut and shifted to the right."));
     QAction *extractZone = addAction(QStringLiteral("remove_extract"), i18n("Extract Timeline Zone"), this, SLOT(slotExtractZone()),
