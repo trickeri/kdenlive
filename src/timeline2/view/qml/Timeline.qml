@@ -556,6 +556,10 @@ function getTrackColor(audio, header) {
     property real timeScale: root.timeline.scaleFactor
     property int snapping: (K.KdenliveSettings.snaptopoints && (root.timeScale < 2 * K.UiUtils.baseSizeMedium)) ?
                                Math.floor(K.UiUtils.baseSizeMedium / (root.timeScale > 3 ? root.timeScale / 2 : root.timeScale)) : -1
+    // Razor/blade snap is generous and zoom-relative: a constant on-screen detection
+    // width (~3x baseSizeMedium pixels) converted to frames, so the cut snaps to clip
+    // edges/cuts on any track equally easily whether zoomed in or out (min 1 frame).
+    property int razorSnapping: K.KdenliveSettings.snaptopoints ? Math.max(1, Math.round(3 * K.UiUtils.baseSizeMedium / root.timeScale)) : -1
     property var timelineSelection: root.timeline.selection
     property int selectedMix: root.timeline.selectedMix
     property var selectedGuides: []
@@ -1416,13 +1420,17 @@ function getTrackColor(audio, header) {
                         rubberSelect.height = 0
                 } else if (mouse.button & Qt.LeftButton) {
                     if (K.Core.activeTool === K.ToolType.RazorTool) {
-                        // razor tool
+                        // razor tool — snap the cut to nearby clip edges/cuts on any track.
                         var y = mouse.y - ruler.height + scrollView.contentY - subtitleTrack.height
+                        var cutFrame = (scrollView.contentX + mouse.x) / root.timeScale
+                        if (root.razorSnapping > 0) {
+                            cutFrame = root.controller.suggestSnapPoint(Math.round(cutFrame), root.razorSnapping)
+                        }
                         if (y >= 0) {
                             let track = tracksRepeater.itemAt(Logic.getTrackIndexFromPos(y)) as Track
-                            root.timeline.cutClipUnderCursor((scrollView.contentX + mouse.x) / root.timeScale, track.trackInternalId)
+                            root.timeline.cutClipUnderCursor(cutFrame, track.trackInternalId)
                         } else if (subtitleTrack.height > 0) {
-                            root.timeline.cutClipUnderCursor((scrollView.contentX + mouse.x) / root.timeScale, -2)
+                            root.timeline.cutClipUnderCursor(cutFrame, -2)
                         }
                     } else if (K.Core.activeTool === K.ToolType.SlipTool) {
                         //slip tool
@@ -1623,6 +1631,10 @@ function getTrackColor(audio, header) {
                 }
                 if (!pressed && !rubberSelect.visible && K.Core.activeTool === K.ToolType.RazorTool) {
                     var mouseXPos = root.getMouseFrame()
+                    if (root.razorSnapping > 0) {
+                        // Snap the cut line to nearby clip edges/cuts so it visibly locks on.
+                        mouseXPos = root.controller.suggestSnapPoint(Math.round(mouseXPos), root.razorSnapping)
+                    }
                     cutLine.x = mouseXPos * root.timeScale - scrollView.contentX
                     if (mouse.modifiers & Qt.ShiftModifier) {
                         // Seek
