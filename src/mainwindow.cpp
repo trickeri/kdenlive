@@ -39,8 +39,12 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "render/renderserver.h"
 
 #ifndef NODBUS
+#include "scripting/kdenlivescript.h"
+#include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
+#include <QFile>
+#include <QTextStream>
 #endif
 
 // #include "kdenlive_debug.h"
@@ -169,6 +173,18 @@ MainWindow::MainWindow(QWidget *parent)
     }
     mainDockWindow = new KDDockWidgets::QtWidgets::MainWindow(QStringLiteral("KdenliveKDDock"));
     mainDockWindow->setCenterWidgetMargins(QMargins(1, 1, 1, 1));
+
+#ifndef NODBUS
+    // Nuldrums: expose a scripting interface on the session bus for AI / voice-driven control.
+    // Registered here in the constructor (not init()), because init() runs after the modal
+    // welcome screen, which would block scripting registration until a project is opened.
+    {
+        auto *scriptInterface = new KdenliveScript(this);
+        QDBusConnection bus = QDBusConnection::sessionBus();
+        bus.registerObject(QStringLiteral("/kdenlive"), scriptInterface, QDBusConnection::ExportScriptableSlots);
+        bus.registerService(QStringLiteral("org.kde.kdenlive.scripting"));
+    }
+#endif
 }
 
 void MainWindow::init()
@@ -181,6 +197,7 @@ void MainWindow::init()
 
     // Handle communication with the renderer app
     new RenderServer(this);
+
     QString defaultProfile = KdenliveSettings::default_profile();
 
     pCore->setCurrentProfile(defaultProfile.isEmpty() ? ProjectManager::getDefaultProjectFormat() : defaultProfile);

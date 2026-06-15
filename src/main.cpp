@@ -344,6 +344,10 @@ int main(int argc, char *argv[])
     QCommandLineOption disableWelcome(QStringLiteral("no-welcome"), i18n("Do not show any welcome screen."));
     parser.addOption(disableWelcome);
 
+    // Nuldrums: open the most recently used project directly (skips the welcome screen)
+    QCommandLineOption openLastOption(QStringLiteral("open-last"), i18n("Open the most recently used project and skip the welcome screen."));
+    parser.addOption(openLastOption);
+
     QCommandLineOption debugOption(QStringLiteral("debug"), i18n("Show some development specific features in the UI, disable all exclude lists for assets."));
     parser.addOption(debugOption);
 
@@ -427,6 +431,19 @@ int main(int argc, char *argv[])
                     }
                 }
             }
+        }
+    }
+
+    if (app.url.isEmpty() && clipsToLoad.isEmpty() && parser.isSet(openLastOption)) {
+        // Nuldrums: resolve the most recent project (KRecentFilesAction stores File1 = most recent)
+        KConfigGroup recentGroup(KSharedConfig::openConfig(), QStringLiteral("Recent Files"));
+        const QString last = recentGroup.readPathEntry(QStringLiteral("File1"), QString());
+        if (last.isEmpty()) {
+            qWarning() << "kdenlive --open-last: no recent project found in config";
+        } else {
+            const QUrl lastUrl(last);
+            app.url = lastUrl.isRelative() ? QUrl::fromLocalFile(last) : lastUrl;
+            qWarning() << "kdenlive --open-last: opening" << app.url.toLocalFile();
         }
     }
 

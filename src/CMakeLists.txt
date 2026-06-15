@@ -73,6 +73,7 @@ list(APPEND kdenlive_SRCS
     core.cpp
     definitions.cpp
     mainwindow.cpp
+    scripting/kdenlivescript.cpp
     kddocksetup.cpp
     mltconnection.cpp
     statusbarmessagelabel.cpp
