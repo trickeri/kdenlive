@@ -541,6 +541,10 @@ public:
     Q_INVOKABLE bool hasKeyframeAt(int cid, int frame);
     /** @brief Make current timeline track active/inactive*/
     Q_INVOKABLE void switchTrackActive(int trackId = -1);
+    /** @brief Toggle the solo state of a track. While any track of a given type (audio/video) is
+     * soloed, only soloed tracks of that type play; the rest are silenced. Solo defeats mute, and
+     * the user's manual mute state is snapshotted on entering solo and restored on leaving it. */
+    Q_INVOKABLE void switchTrackSolo(int trackId = -1);
     /** @brief Toggle the active/inactive state of all tracks*/
     void switchAllTrackActive();
     /** @brief Make all tracks active or inactive */

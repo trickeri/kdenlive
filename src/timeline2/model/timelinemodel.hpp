@@ -178,7 +178,8 @@ public:
         SelectedRole,       /// clip+composition only
         TrackActiveRole,    /// track only
         AudioRecordRole,    /// track only
-        EffectZonesRole     /// track only
+        EffectZonesRole,    /// track only
+        IsSoloRole          /// track only
     };
 
     enum MoveResult { MoveSuccess, MoveErrorAudio, MoveErrorVideo, MoveErrorType, MoveErrorOther };

@@ -274,6 +274,7 @@ QHash<int, QByteArray> TimelineItemModel::roleNames() const
     roles[FramerateRole] = "fps";
     roles[GroupedRole] = "grouped";
     roles[IsDisabledRole] = "disabled";
+    roles[IsSoloRole] = "solo";
     roles[IsAudioRole] = "audio";
     roles[AudioChannelsRole] = "audioChannels";
     roles[AudioStreamRole] = "audioStream";
@@ -445,6 +446,8 @@ QVariant TimelineItemModel::data(const QModelIndex &index, int role) const
             return getTrackById_const(id)->trackDuration();
         case IsDisabledRole:
             return getTrackById_const(id)->isAudioTrack() ? getTrackById_const(id)->isMute() : getTrackById_const(id)->isHidden();
+        case IsSoloRole:
+            return getTrackById_const(id)->getProperty(QStringLiteral("kdenlive:solo")).toInt() == 1;
         case IsAudioRole:
             return getTrackById_const(id)->isAudioTrack();
         case TrackTagRole:
@@ -578,6 +581,8 @@ void TimelineItemModel::setTrackProperty(int trackId, const QString &name, const
                 pCore->invalidateAudio(ObjectId(KdenliveObjectType::TimelineTrack, trackId, m_uuid));
             }
         }
+    } else if (name == QLatin1String("kdenlive:solo")) {
+        roles.push_back(IsSoloRole);
     } else if (name == QLatin1String("kdenlive:timeline_active")) {
         roles.push_back(TrackActiveRole);
     } else if (name == QLatin1String("kdenlive:thumbs_format")) {

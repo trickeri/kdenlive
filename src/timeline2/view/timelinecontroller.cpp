@@ -3879,6 +3879,59 @@ void TimelineController::switchTrackActive(int trackId)
     m_activeSnaps.clear();
 }
 
+void TimelineController::switchTrackSolo(int trackId)
+{
+    if (trackId == -1) {
+        trackId = m_activeTrack;
+    }
+    if (trackId < 0) {
+        return;
+    }
+    const bool isAudio = m_model->isAudioTrack(trackId);
+    // Toggle this track's solo flag
+    const bool nowSolo = m_model->getTrackProperty(trackId, QStringLiteral("kdenlive:solo")).toInt() != 1;
+    m_model->setTrackProperty(trackId, QStringLiteral("kdenlive:solo"), nowSolo ? QStringLiteral("1") : QStringLiteral("0"));
+
+    // Is any track of this media type now soloed?
+    bool anySolo = false;
+    for (const auto &track : m_model->m_allTracks) {
+        if (track->isAudioTrack() == isAudio && m_model->getTrackProperty(track->getId(), QStringLiteral("kdenlive:solo")).toInt() == 1) {
+            anySolo = true;
+            break;
+        }
+    }
+    // Recompute the effective playback state ("hide") of every track of this media type.
+    // Same convention as hideTrack(): "3" = shown, "1" = audio muted, "2" = video hidden.
+    const QString showState = QStringLiteral("3");
+    const QString muteState = isAudio ? QStringLiteral("1") : QStringLiteral("2");
+    const QString savedKey = QStringLiteral("kdenlive:solo_savedhide");
+    for (const auto &track : m_model->m_allTracks) {
+        if (track->isAudioTrack() != isAudio) {
+            continue;
+        }
+        const int tid = track->getId();
+        const bool tSolo = m_model->getTrackProperty(tid, QStringLiteral("kdenlive:solo")).toInt() == 1;
+        const QString saved = m_model->getTrackProperty(tid, savedKey).toString();
+        if (anySolo) {
+            if (saved.isEmpty()) {
+                // Entering solo: remember the user's manual mute/hide state so it can be restored later.
+                QString manual = m_model->getTrackProperty(tid, QStringLiteral("hide")).toString();
+                if (manual.isEmpty()) {
+                    manual = showState;
+                }
+                m_model->setTrackProperty(tid, savedKey, manual);
+            }
+            // Solo defeats mute: soloed tracks play, the rest are silenced.
+            m_model->setTrackProperty(tid, QStringLiteral("hide"), tSolo ? showState : muteState);
+        } else if (!saved.isEmpty()) {
+            // Last solo just cleared: restore the manual state and drop the snapshot.
+            m_model->setTrackProperty(tid, QStringLiteral("hide"), saved);
+            m_model->setTrackProperty(tid, savedKey, QString());
+        }
+    }
+    m_model->updateDuration();
+}
+
 void TimelineController::switchAllTrackActive()
 {
     auto it = m_model->m_allTracks.cbegin();

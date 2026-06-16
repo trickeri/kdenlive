@@ -27,6 +27,7 @@ Rectangle {
     required property int isComposite
     required property bool isLocked
     required property bool isActive
+    required property bool isSolo
     required property bool isAudio
     required property bool showAudioRecord
     required property bool current
@@ -264,17 +265,53 @@ Rectangle {
                 text: trackLabel.visible? KI18n.i18n("Minimize") : KI18n.i18n("Expand")
             }
         }
+        ToolButton {
+            id: lockButton
+            anchors.left: expandButton.right
+            width: root.collapsedHeight
+            height: root.collapsedHeight
+            focusPolicy: Qt.NoFocus
+            icon.name: trackHeadRoot.isLocked ? "lock" : "unlock"
+            onClicked: {
+                var willLock = !trackHeadRoot.isLocked
+                trackHeadRoot.controller.setTrackLockedState(trackHeadRoot.trackId, willLock)
+                // Lock doubles as the active/inactive-for-editing control now that the
+                // separate active tag is gone: unlocked => active, locked => inactive.
+                if (trackHeadRoot.isActive === willLock) {
+                    trackHeadRoot.timeline.switchTrackActive(trackHeadRoot.trackId)
+                }
+            }
+            ToolTip {
+                visible: lockButton.hovered
+                font: K.UiUtils.smallestReadableFont
+                text: trackHeadRoot.isLocked ? KI18n.i18n("Unlock track") : KI18n.i18n("Lock track")
+            }
+            SequentialAnimation {
+                id: flashLock
+                loops: 3
+                ParallelAnimation {
+                    ScaleAnimator {target: lockButton; from: 1; to: 1.2; duration: 120}
+                }
+                ParallelAnimation {
+                    ScaleAnimator {target: lockButton; from: 1.6; to: 1; duration: 120}
+                }
+            }
+        }
         Label {
             id: trackLed
+            // Active-for-editing toggle removed from the UI: lock now governs editability
+            // (Photoshop-style). Kept as a zero-width invisible anchor so dependent layout
+            // bindings (miniTrackLabel, debug label) still resolve.
+            visible: false
             property color bgColor: Qt.darker(trackHeadRoot.color, 0.55)
-            anchors.left: expandButton.right
+            anchors.left: lockButton.right
             font: K.UiUtils.smallestReadableFont
             text: trackHeadRoot.trackTag
             color: activePalette.text
             background: Rectangle {
                 color: trackLed.bgColor
             }
-            width: root.trackTagWidth
+            width: 0
             height: root.collapsedHeight - 2
             y: 1
             verticalAlignment: Text.AlignVCenter
@@ -416,28 +453,36 @@ Rectangle {
             }
 
             ToolButton {
-                id: lockButton
+                id: soloButton
                 width: root.collapsedHeight
                 height: root.collapsedHeight
                 focusPolicy: Qt.NoFocus
-                icon.name: trackHeadRoot.isLocked ? "lock" : "unlock"
-                onClicked: trackHeadRoot.controller.setTrackLockedState(trackHeadRoot.trackId, !trackHeadRoot.isLocked)
-                ToolTip {
-                    visible: lockButton.hovered
-                    font: K.UiUtils.smallestReadableFont
-                    text: trackHeadRoot.isLocked ? KI18n.i18n("Unlock track") : KI18n.i18n("Lock track")
+                checkable: true
+                checked: trackHeadRoot.isSolo
+                onClicked: trackHeadRoot.timeline.switchTrackSolo(trackHeadRoot.trackId)
+                contentItem: Text {
+                    text: "S"
+                    font.bold: true
+                    font.pixelSize: Math.round(parent.height * 0.55)
+                    color: soloButton.checked ? "#08191c" : activePalette.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                 }
-                SequentialAnimation {
-                    id: flashLock
-                    loops: 3
-                    ParallelAnimation {
-                        ScaleAnimator {target: lockButton; from: 1; to: 1.2; duration: 120}
-                    }
-                    ParallelAnimation {
-                        ScaleAnimator {target: lockButton; from: 1.6; to: 1; duration: 120}
-                    }
+                background: Rectangle {
+                    radius: 2
+                    color: soloButton.checked ? "#16d6e8"
+                         : soloButton.hovered ? Qt.rgba(activePalette.highlight.r, activePalette.highlight.g, activePalette.highlight.b, 0.2)
+                         : "transparent"
+                    border.width: soloButton.hovered && !soloButton.checked ? 1 : 0
+                    border.color: activePalette.highlight
+                }
+                ToolTip {
+                    visible: soloButton.hovered
+                    font: K.UiUtils.smallestReadableFont
+                    text: trackHeadRoot.isSolo ? KI18n.i18n("Unsolo track") : KI18n.i18n("Solo track (play only soloed tracks)")
                 }
             }
+
         }
         Item {
             id: recLayout

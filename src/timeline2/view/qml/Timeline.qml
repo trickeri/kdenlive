@@ -1281,6 +1281,7 @@ function getTrackColor(audio, header) {
                             isComposite: model.composite
                             isLocked: model.locked
                             isActive: model.trackActive
+                            isSolo: model.solo
                             isAudio: model.audio
                             showAudioRecord: model.audioRecord
                             effectNames: model.effectNames
