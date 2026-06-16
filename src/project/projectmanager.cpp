@@ -888,6 +888,11 @@ void ProjectManager::abortLoading()
 void ProjectManager::finalizeDocumentOpening(KdenliveDoc *document)
 {
     m_notesPlugin->setProject(document);
+    // Restore the workspace mode this project was saved with (falls back to the Editing default if none).
+    const QString layoutMode = document->getDocumentProperty(QStringLiteral("activelayout"));
+    if (!layoutMode.isEmpty()) {
+        Q_EMIT pCore->loadLayoutById(layoutMode, false);
+    }
     Q_EMIT pCore->closeSplash();
 }
 

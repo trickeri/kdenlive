@@ -28,7 +28,10 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QStringList>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 #include <KColorScheme>
 #include <KConfigGroup>
@@ -161,6 +164,25 @@ void LayoutManagement::initializeLayouts()
         switcherLayouts.append(qMakePair(layout.internalId, layout.displayName));
     }
 
+    // Custom switcher order (Troy): Editing first (default), then Effects, Color, Audio, Logging.
+    // Rank by the first matching keyword in either the internal id or the (possibly translated) label;
+    // anything unmatched keeps its original relative position after the known ones.
+    const QStringList preferredOrder = {QStringLiteral("editing"), QStringLiteral("effects"), QStringLiteral("color"), QStringLiteral("audio"),
+                                        QStringLiteral("logging")};
+    auto rank = [&preferredOrder](const QPair<QString, QString> &entry) -> int {
+        for (int i = 0; i < preferredOrder.size(); ++i) {
+            if (entry.first.contains(preferredOrder.at(i), Qt::CaseInsensitive) || entry.second.contains(preferredOrder.at(i), Qt::CaseInsensitive)) {
+                return i;
+            }
+        }
+        return static_cast<int>(preferredOrder.size());
+    };
+    std::stable_sort(switcherLayouts.begin(), switcherLayouts.end(),
+                     [&rank](const QPair<QString, QString> &a, const QPair<QString, QString> &b) { return rank(a) < rank(b); });
+
+    // "Custom" pinned at the bottom: the user's freeform arrangement (selected whenever no preset is active).
+    switcherLayouts.append(qMakePair(QStringLiteral("__custom__"), i18n("Custom")));
+
     // Update the switcher with the layouts
     m_layoutSwitcher->setLayouts(switcherLayouts, m_currentLayoutId);
 
@@ -210,6 +232,10 @@ void LayoutManagement::slotLoadLayoutFromAction(QAction *action)
 
 bool LayoutManagement::slotLoadLayoutById(const QString &layoutId)
 {
+    if (layoutId == QLatin1String("__custom__")) {
+        // The user's freeform "Custom" arrangement, stored outside the named-layout collection.
+        return slotLoadLayoutFromData(KdenliveSettings::customLayout());
+    }
     // Get the layout from our collection
     LayoutInfo layout = m_layoutCollection.getLayout(layoutId);
     return slotLoadLayout(layout);
@@ -222,8 +248,18 @@ bool LayoutManagement::slotLoadLayout(LayoutInfo layout, bool onlyIfNoPrevious)
         return false;
     }
 
+    // If we are leaving the freeform "Custom" layout, snapshot it so the user can return to it.
+    if (m_currentLayoutId.isEmpty() && m_firstLayoutLoaded) {
+        KDDockWidgets::LayoutSaver saver(KDDockWidgets::RestoreOption_RelativeToMainWindow);
+        KdenliveSettings::setCustomLayout(QString(saver.serializeLayout()));
+    }
+
     // Set as current layout
     m_currentLayoutId = layout.internalId;
+    // Remember the chosen mode in the project so it is restored when the project is reopened.
+    if (KdenliveDoc *doc = pCore->currentDoc()) {
+        doc->setDocumentProperty(QStringLiteral("activelayout"), layout.internalId);
+    }
 
     // Parse layout data
     KDDockWidgets::LayoutSaver dockLayout(KDDockWidgets::RestoreOption_RelativeToMainWindow);
@@ -272,9 +308,12 @@ bool LayoutManagement::slotLoadLayoutFromData(const QString &layoutData, bool on
         pCore->displayBinMessage(i18n("The layout from the project file could not be restored."), KMessageWidget::Warning);
         return false;
     }
-    // Loaded a layout from Kdenlive settings or document
+    // Loaded a freeform layout (the "Custom" arrangement)
     m_currentLayoutId.clear();
     m_layoutSwitcher->setCurrentLayout(QString());
+    if (KdenliveDoc *doc = pCore->currentDoc()) {
+        doc->setDocumentProperty(QStringLiteral("activelayout"), QStringLiteral("__custom__"));
+    }
     if (!KdenliveSettings::showtitlebars() && m_firstLayoutLoaded) {
         Q_EMIT pCore->hideBars(!KdenliveSettings::showtitlebars());
     }

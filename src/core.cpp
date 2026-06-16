@@ -601,12 +601,12 @@ void Core::restoreLayout()
     if (m_mainWindow == nullptr) {
         return;
     }
-    if (KdenliveSettings::kdockLayout().isEmpty() || !KdenliveSettings::kdockLayout().contains(QStringLiteral("KdenliveKDDock"))) {
-        // No existing layout, probably first run
-        Q_EMIT loadLayoutById(QStringLiteral("editing"), true);
-    } else {
-        Q_EMIT loadLayoutFromData(KdenliveSettings::kdockLayout().toUtf8(), true);
+    // Preserve the user's existing freeform arrangement as the "Custom" layout (seed once).
+    if (KdenliveSettings::customLayout().isEmpty() && KdenliveSettings::kdockLayout().contains(QStringLiteral("KdenliveKDDock"))) {
+        KdenliveSettings::setCustomLayout(KdenliveSettings::kdockLayout());
     }
+    // Editing is the default workspace at startup; a per-project mode (if saved) is applied when the project opens.
+    Q_EMIT loadLayoutById(QStringLiteral("editing"), true);
     m_mainWindow->show();
     if (!KdenliveSettings::showtitlebars()) {
         Q_EMIT pCore->hideBars(true);

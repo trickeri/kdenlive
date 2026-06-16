@@ -7,14 +7,14 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #pragma once
 
-#include <QAbstractButton>
-#include <QButtonGroup>
-#include <QHBoxLayout>
+#include <QComboBox>
 #include <QList>
 #include <QPair>
-#include <QStringList>
+#include <QString>
 #include <QWidget>
 
+/** @brief A compact dropdown for switching between workspace layouts.
+ *  (Replaces the former row of push-buttons with a single styled combo box.) */
 class LayoutSwitcher : public QWidget
 {
     Q_OBJECT
@@ -28,9 +28,6 @@ Q_SIGNALS:
     void layoutSelected(const QString &layoutName);
 
 private:
-    QButtonGroup *m_buttonGroup;
-    QHBoxLayout *m_layout;
+    QComboBox *m_combo;
     QString m_currentLayoutId;
-
-    void buttonClicked(QAbstractButton *button);
 };
