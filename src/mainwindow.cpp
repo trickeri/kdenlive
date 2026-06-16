@@ -2229,6 +2229,8 @@ void MainWindow::setupActions()
               QIcon::fromTheme(QStringLiteral("document-export")));
     addAction(QStringLiteral("generate_karaoke_captions"), i18n("Generate Karaoke Captions"), this, SLOT(slotGenerateKaraokeCaptions()),
               QIcon::fromTheme(QStringLiteral("add-subtitle")));
+    addAction(QStringLiteral("caption_settings"), i18n("Caption Settings…"), this, SLOT(slotOpenCaptionSettings()),
+              QIcon::fromTheme(QStringLiteral("configure")));
     addAction(QStringLiteral("delete_subtitle_clip"), i18n("Delete Subtitle"), this, SLOT(slotDeleteItem()), QIcon::fromTheme(QStringLiteral("edit-delete")));
     addAction(QStringLiteral("audio_recognition"), i18n("Speech Recognition…"), this, SLOT(slotSpeechRecognition()),
               QIcon::fromTheme(QStringLiteral("autocorrection")));
@@ -5245,15 +5247,26 @@ void MainWindow::slotGenerateKaraokeCaptions()
                 job->deleteLater();
             });
     // media -> per-word timings (whisper.cpp Vulkan, large-v3-turbo) -> Kdenlive-native karaoke ASS.
-    // pop preset = per-word highlight (the spoken word switches to the highlight colour).
-    job->start(QStringLiteral("nulcaption"), {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--preset"), QStringLiteral("pop"),
-                                              QStringLiteral("--ass"), assOut});
+    // Style, look (pop/sweep), VAD and line layout come from the NulCaption settings
+    // window (Subtitles -> Caption Settings…), which the CLI reads as defaults — so we
+    // pass no --preset/--style here, letting those settings take effect.
+    job->start(QStringLiteral("nulcaption"), {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--ass"), assOut});
     if (!job->waitForStarted(3000)) {
         pCore->displayMessage(i18n("Could not start 'nulcaption' — is it installed and on PATH? (run nulcaption-setup once)"), ErrorMessage);
         job->deleteLater();
         return;
     }
     pCore->displayMessage(i18n("Generating karaoke captions…"), ProcessingJobMessage);
+}
+
+void MainWindow::slotOpenCaptionSettings()
+{
+    // Launch the standalone NulCaption settings window (PySide6). It writes the
+    // config the `nulcaption` CLI reads as defaults, so it runs as an independent
+    // process — startDetached so it outlives this call and never blocks the editor.
+    if (!QProcess::startDetached(QStringLiteral("nulcaption-settings"), {})) {
+        pCore->displayMessage(i18n("Could not start 'nulcaption-settings' — is nulcaption installed? (run nulcaption-setup once)"), ErrorMessage);
+    }
 }
 
 void MainWindow::slotAddSubtitle(const QString &text)

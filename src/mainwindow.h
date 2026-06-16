@@ -405,6 +405,8 @@ public Q_SLOTS:
     void slotEditSubtitle(const QMap<QString, QString> &subProperties = {});
     /** @brief Generate word-by-word karaoke captions for the selected bin clip (NulCaption). */
     void slotGenerateKaraokeCaptions();
+    /** @brief Open the standalone NulCaption settings window (nulcaption-settings). */
+    void slotOpenCaptionSettings();
     /** @brief Show/hide subtitle track. */
     void slotShowSubtitles(bool show);
     void slotTranscode(const QStringList &urls = QStringList());
