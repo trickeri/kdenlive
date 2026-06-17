@@ -3901,9 +3901,9 @@ void TimelineController::switchTrackSolo(int trackId)
         }
     }
     // Recompute the effective playback state ("hide") of every track of this media type.
-    // Same convention as hideTrack(): "3" = shown, "1" = audio muted, "2" = video hidden.
-    const QString showState = QStringLiteral("3");
-    const QString muteState = isAudio ? QStringLiteral("1") : QStringLiteral("2");
+    // Same convention as hideTrack(): shown = "1" (audio) / "2" (video), muted/hidden = "3".
+    const QString showState = isAudio ? QStringLiteral("1") : QStringLiteral("2");
+    const QString muteState = QStringLiteral("3");
     const QString savedKey = QStringLiteral("kdenlive:solo_savedhide");
     for (const auto &track : m_model->m_allTracks) {
         if (track->isAudioTrack() != isAudio) {
