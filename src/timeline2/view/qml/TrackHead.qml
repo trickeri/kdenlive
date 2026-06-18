@@ -425,6 +425,8 @@ Rectangle {
                 focusPolicy: Qt.NoFocus
                 icon.name: trackHeadRoot.isAudio ? (trackHeadRoot.isDisabled ? "audio-off" : "audio-volume-high")
                                    : (trackHeadRoot.isDisabled ? "kdenlive-hide-video" : "kdenlive-show-video")
+                // Nuldrums: colour-code the media-type icons (video = bright pink, audio = teal green)
+                icon.color: trackHeadRoot.isAudio ? "#14d1a8" : "#ff3db4"
                 width: root.collapsedHeight
                 height: root.collapsedHeight
                 onClicked: trackHeadRoot.timeline.hideTrack(trackHeadRoot.trackId, trackHeadRoot.isDisabled, modifier & Qt.ShiftModifier)
