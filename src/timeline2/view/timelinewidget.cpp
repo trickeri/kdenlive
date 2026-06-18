@@ -201,6 +201,33 @@ void TimelineWidget::setModel(const std::shared_ptr<TimelineItemModel> &model, M
     timelineController.checkDuration();
 }
 
+void TimelineWidget::showEvent(QShowEvent *event)
+{
+    QQuickWidget::showEvent(event);
+    // Nuldrums: when a sequence tab becomes visible, restore its saved vertical
+    // scroll, or centre on the video/audio boundary the first time it is shown.
+    if (loading || model() == nullptr || rootObject() == nullptr || pCore->currentDoc() == nullptr) {
+        return;
+    }
+    int savedVy = pCore->currentDoc()->getSequenceProperty(getUuid(), QStringLiteral("verticalScroll"), QStringLiteral("-1")).toInt();
+    QMetaObject::invokeMethod(rootObject(), "applyVerticalView", Qt::QueuedConnection, Q_ARG(QVariant, savedVy));
+}
+
+void TimelineWidget::hideEvent(QHideEvent *event)
+{
+    // Nuldrums: remember this sequence's vertical scroll when leaving its tab so
+    // it can be restored on return. getVerticalScroll() returns -1 if the layout
+    // isn't ready (e.g. during load churn), in which case we skip the save.
+    if (!loading && model() != nullptr && rootObject() != nullptr && pCore->currentDoc() != nullptr && !pCore->currentDoc()->closing) {
+        QVariant vy;
+        QMetaObject::invokeMethod(rootObject(), "getVerticalScroll", Qt::DirectConnection, Q_RETURN_ARG(QVariant, vy));
+        if (vy.isValid() && vy.toInt() >= 0) {
+            pCore->currentDoc()->setSequenceProperty(getUuid(), QStringLiteral("verticalScroll"), vy.toInt());
+        }
+    }
+    QQuickWidget::hideEvent(event);
+}
+
 void TimelineWidget::emitMousePos(int offset)
 {
     pCore->window()->slotUpdateMousePosition(int((offset + mapFromGlobal(QCursor::pos()).x()) / timelineController.scaleFactor()),

@@ -50,6 +50,10 @@ public:
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    /** @brief Restore this sequence's vertical scroll (or centre on the V/A boundary) when shown. */
+    void showEvent(QShowEvent *event) override;
+    /** @brief Persist this sequence's vertical scroll when hidden, so tab switches keep position. */
+    void hideEvent(QHideEvent *event) override;
 
 public Q_SLOTS:
     void slotChangeZoom(int value, bool zoomOnMouse);

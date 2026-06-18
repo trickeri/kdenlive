@@ -96,6 +96,38 @@ Rectangle {
         repeat: false
     }
 
+    // Nuldrums: apply a per-sequence vertical scroll when a tab becomes visible.
+    // pendingY >= 0 restores a saved scroll; pendingY < 0 centres the view on the
+    // video/audio boundary (first time a sequence is shown). Recomputes each tick
+    // until the layout settles (target converges) because track heights / viewport
+    // size are still changing right after a tab is shown.
+    Timer {
+        id: applyViewTimer
+        property int tries: 0
+        property real lastTarget: -2
+        property int pendingY: -1
+        interval: 50
+        repeat: true
+        onTriggered: {
+            tries++
+            if (scrollView.height <= 0 || tracksRepeater.count === 0) {
+                if (tries > 40) stop()
+                return
+            }
+            var maxY = Math.max(0, trackHeaders.height + subtitleTrack.height - scrollView.height)
+            var target = pendingY >= 0 ? Math.min(pendingY, maxY) : root.computeCenterOnBoundaryY()
+            if (target < 0) {
+                if (tries > 40) stop()
+                return
+            }
+            scrollView.contentY = target
+            if (Math.abs(target - lastTarget) < 1 || tries > 40) {
+                stop() // layout converged
+            }
+            lastTarget = target
+        }
+    }
+
     signal clipClicked()
     signal showClipMenu(int cid)
     signal showMixMenu(int cid)
@@ -149,6 +181,49 @@ Rectangle {
 
     function scrollPos() {
         return scrollView.contentX
+    }
+
+    // Nuldrums: returns the clamped contentY that puts the video/audio track
+    // boundary (V1 just above, A1 just below) at the middle of the viewport,
+    // or -1 while the layout isn't ready yet. The boundary is the top of the
+    // highest audio track (min y over audio tracks), so it is independent of
+    // the track delegate ordering.
+    function computeCenterOnBoundaryY() {
+        if (scrollView.height <= 0 || tracksRepeater.count === 0) {
+            return -1
+        }
+        var boundaryY = -1
+        for (var i = 0; i < tracksRepeater.count; i++) {
+            var t = tracksRepeater.itemAt(i) as Track
+            if (t && t.isAudio && (boundaryY < 0 || t.y < boundaryY)) {
+                boundaryY = t.y
+            }
+        }
+        if (boundaryY < 0) {
+            // no audio track: centre the whole track stack
+            boundaryY = trackHeaders.height / 2
+        }
+        var maxY = Math.max(0, trackHeaders.height + subtitleTrack.height - scrollView.height)
+        return Math.max(0, Math.min(boundaryY + subtitleTrack.height - scrollView.height / 2, maxY))
+    }
+
+    // Nuldrums: current vertical scroll, or -1 if the layout isn't ready yet
+    // (so callers don't persist a bogus value while a tab is hidden/unlaid-out).
+    function getVerticalScroll() {
+        if (scrollView.height <= 0 || tracksRepeater.count === 0) {
+            return -1
+        }
+        return Math.round(scrollView.contentY)
+    }
+
+    // Nuldrums: restore a saved vertical scroll (savedY >= 0) or centre on the
+    // video/audio boundary (savedY < 0), once the layout is ready.
+    function applyVerticalView(savedY) {
+        applyViewTimer.stop()
+        applyViewTimer.pendingY = savedY
+        applyViewTimer.tries = 0
+        applyViewTimer.lastTarget = -2
+        applyViewTimer.restart()
     }
 
     function goToStart(pos) {
