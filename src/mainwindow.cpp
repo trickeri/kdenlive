@@ -36,6 +36,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include "keysequencehandler.h"
 #include "layouts/layoutmanagement.h"
 #include "library/librarywidget.h"
+#include "nulvoicechatlistener.h"
 #include "render/renderserver.h"
 
 #ifndef NODBUS
@@ -185,6 +186,25 @@ MainWindow::MainWindow(QWidget *parent)
         bus.registerService(QStringLiteral("org.kde.kdenlive.scripting"));
     }
 #endif
+
+    // Nuldrums: listen on the voicechat dictation daemon's transcript socket. When Kdenlive is
+    // focused, voicechat runs in "emit" mode (no paste) and broadcasts the transcript here.
+    m_voiceChat = new NulVoiceChatListener(this);
+    connect(m_voiceChat, &NulVoiceChatListener::transcriptReceived, this, &MainWindow::handleVoiceTranscript);
+}
+
+void MainWindow::handleVoiceTranscript(const QString &text, const QString &app, const QString &mode)
+{
+    // Every transcript is broadcast to all listeners, so ignore the ones voicechat already
+    // handled by pasting elsewhere (e.g. into a terminal); only "emit" mode means voicechat
+    // withheld the paste expecting us — i.e. Kdenlive was the focused app — to consume it.
+    if (mode != QLatin1String("emit")) {
+        return;
+    }
+    // Nuldrums hook: a transcript was dictated via voicechat while Kdenlive was focused.
+    // TODO(nuldrums): act on the dictated text (e.g. rename a clip, drive a command, search).
+    // For now just log it so the wiring is verifiable end-to-end.
+    qInfo("voicechat transcript (app=%s mode=%s): %s", qUtf8Printable(app), qUtf8Printable(mode), qUtf8Printable(text));
 }
 
 void MainWindow::init()

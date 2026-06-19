@@ -62,6 +62,7 @@ class Transition;
 class TimelineItemModel;
 class MonitorProxy;
 class KDualAction;
+class NulVoiceChatListener;
 
 class MltErrorEvent : public QEvent
 {
@@ -246,6 +247,9 @@ private:
     void updateDockMenu();
     /** @brief Update the audio thumbnails action icon based on current zoom and toggle state */
     void updateAudioWaveformActionIcon();
+
+    /** @brief Nuldrums: listens on the voicechat transcript socket; see handleVoiceTranscript(). */
+    NulVoiceChatListener *m_voiceChat{nullptr};
 
     OtioExport *m_otioExport{nullptr};
     OtioImport *m_otioImport{nullptr};
@@ -450,6 +454,11 @@ public Q_SLOTS:
     KIO::filesize_t fetchFolderSize(const QString path);
 
 private Q_SLOTS:
+    /** @brief Nuldrums: handle a transcript dictated via the voicechat daemon (emit mode).
+     * This is the hook for voice-driven behavior in Kdenlive — fill in what the dictated
+     * @p text should do. @p app is the focused app id voicechat saw; @p mode is its routing
+     * mode (normally "emit" here). Wired from m_voiceChat in the constructor. */
+    void handleVoiceTranscript(const QString &text, const QString &app, const QString &mode);
     /** @brief Shows the shortcut dialog. */
     void slotEditKeys();
     void slotEditToolbars();
