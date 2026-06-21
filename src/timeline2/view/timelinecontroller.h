@@ -523,6 +523,9 @@ public:
     Q_INVOKABLE void setTimecodeRef(int clipId = -1);
     Q_INVOKABLE void alignTimecode(int clipId = -1);
     Q_INVOKABLE void urlDropped(QStringList droppedFile, int frame, int tid);
+    /** @brief Quickly probe a dropped media file's duration (in project-profile frames) to size the
+     *  drag-preview ghost. Returns -1 when the duration cannot be determined. */
+    Q_INVOKABLE int probeDropFrameDuration(const QString &url);
 
     Q_INVOKABLE bool endFakeMove(int clipId, int position, bool updateView, bool logUndo, bool invalidateTimeline);
     Q_INVOKABLE int getItemMovingTrack(int itemId) const;

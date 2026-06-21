@@ -1217,8 +1217,21 @@ function getTrackColor(audio, header) {
                 var url = drag.urls[i]
                 droppedUrls.push(Qt.resolvedUrl(url))
             }
+            // Premiere-style preview: probe the first file's duration once so the ghost
+            // can show its real length while dragging (media isn't imported yet).
+            dropGhost.frames = 0
+            dropGhost.label = ""
+            if (droppedUrls.length > 0) {
+                var dur = root.timeline.probeDropFrameDuration(droppedUrls[0].toString())
+                if (dur > 0) {
+                    dropGhost.frames = dur
+                    var s = droppedUrls[0].toString()
+                    dropGhost.label = decodeURIComponent(s.substring(s.lastIndexOf('/') + 1))
+                }
+            }
         }
         onExited:{
+            dropGhost.visible = false
             if (root.clipBeingDroppedId != -1) {
                 root.controller.requestItemDeletion(root.clipBeingDroppedId, false)
             }
@@ -1236,10 +1249,22 @@ function getTrackColor(audio, header) {
                 if (track >= 0  && track < tracksRepeater.count) {
                     root.timeline.activeTrack = (tracksRepeater.itemAt(track) as Track).trackInternalId
                     root.continuousScrolling(drag.x + scrollView.contentX, drag.y + scrollView.contentY)
+                    // Position the drop preview ghost at the exact landing spot (same frame the
+                    // drop uses), spanning the file's probed duration on the hovered track.
+                    if (dropGhost.frames > 0) {
+                        var trackItem = tracksRepeater.itemAt(track) as Track
+                        dropGhost.x = frame * root.timeScale
+                        dropGhost.y = trackItem.y
+                        dropGhost.height = trackItem.height
+                        dropGhost.visible = true
+                    }
+                } else {
+                    dropGhost.visible = false
                 }
             }
         }
         onDropped: drag => {
+            dropGhost.visible = false
             var frame = Math.floor((drag.x + scrollView.contentX) / root.timeScale)
             var track = root.timeline.activeTrack
             if (root.controller.normalEdit()) {
@@ -2351,6 +2376,31 @@ function getTrackColor(audio, header) {
                                     if (root.clipBeingDroppedId > -1) {
                                         root.controller.hideComposition(root.clipBeingDroppedId, visible)
                                     }
+                                }
+                            }
+                            Rectangle {
+                                // Premiere-style preview of where a file dragged from outside
+                                // (file manager / media browser) will land and how long it is.
+                                id: dropGhost
+                                visible: false
+                                z: 99
+                                property int frames: 0
+                                property string label: ""
+                                width: frames * root.timeScale
+                                color: Qt.rgba(activePalette.highlight.r, activePalette.highlight.g, activePalette.highlight.b, 0.35)
+                                border.color: activePalette.highlight
+                                border.width: 2
+                                radius: 3
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 4
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                    color: activePalette.highlightedText
+                                    font: K.UiUtils.smallestReadableFont
+                                    text: dropGhost.label
                                 }
                             }
                         }

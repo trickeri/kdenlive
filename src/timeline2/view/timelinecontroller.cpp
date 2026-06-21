@@ -49,10 +49,15 @@
 #include <KRecentDirs>
 #include <KUrlRequesterDialog>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QJsonArray>
+#include <QMimeDatabase>
 #include <QQuickItem>
+#include <QUrl>
 #include <QtMath>
+
+#include <mlt++/MltProducer.h>
 
 #include <memory>
 
@@ -5398,6 +5403,33 @@ void TimelineController::urlDropped(QStringList droppedFile, int frame, int tid)
     } else {
         addAndInsertFile(QUrl(droppedFile.first()).toLocalFile(), tid, {frame, -1}, false, true);
     }
+}
+
+int TimelineController::probeDropFrameDuration(const QString &url)
+{
+    if (url.isEmpty()) {
+        return -1;
+    }
+    const QString path = url.startsWith(QLatin1String("file:")) ? QUrl(url).toLocalFile() : url;
+    QFileInfo info(path);
+    if (path.isEmpty() || !info.exists() || !info.isFile()) {
+        return -1;
+    }
+    QMimeDatabase db;
+    const QString mime = db.mimeTypeForFile(path).name();
+    if (mime.startsWith(QLatin1String("image/"))) {
+        // Images have no intrinsic duration; mirror the value used on import.
+        return pCore->getDurationFromString(KdenliveSettings::image_duration());
+    }
+    // Throwaway producer: reads the header only; length is reported in project-profile frames.
+    std::unique_ptr<Mlt::Producer> producer(new Mlt::Producer(pCore->getProjectProfile(), path.toUtf8().constData()));
+    if (producer && producer->is_valid()) {
+        int len = producer->get_length();
+        if (len > 1) {
+            return len;
+        }
+    }
+    return -1;
 }
 
 void TimelineController::finishRecording(const QString &recordedFile)
