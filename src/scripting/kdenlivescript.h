@@ -61,4 +61,19 @@ public Q_SLOTS:
     Q_SCRIPTABLE bool save();
     /** @brief Cleanly shut down Kdenlive (prompt-free; removes the crash lock). Call save() first if needed. */
     Q_SCRIPTABLE void quit();
+    /** @brief Trigger a Kdenlive menu/toolbar action by its action-collection name
+     *  (e.g. "cut_timeline_all_clips" = razor all tracks at the playhead, "undo").
+     *  Returns true if the action exists and was triggered. Lets voice control fire
+     *  any editor action without a dedicated D-Bus method per action. */
+    Q_SCRIPTABLE bool triggerAction(const QString &name);
+    /** @brief Add a new (blank) sequence tab to the current project. videoTracks /
+     *  audioTracks default to -1 (Kdenlive's default counts). The sequence uses the
+     *  PROJECT profile — a sequence can't have its own resolution. Returns true. */
+    Q_SCRIPTABLE bool newSequence(int videoTracks = -1, int audioTracks = -1);
+    /** @brief Create a new project using the MLT profile at @p profilePath
+     *  (untitled; no save dialog). To avoid a modal save prompt that would block
+     *  the bridge, a modified current project is auto-saved first when it already
+     *  has a path; an untitled+modified one is refused. Returns "ok" | "unsaved"
+     *  (save the current project first) | "savefailed" | "error". */
+    Q_SCRIPTABLE QString newProjectProfile(const QString &profilePath);
 };

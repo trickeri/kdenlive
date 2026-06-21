@@ -4,6 +4,7 @@
 */
 #include "kdenlivescript.h"
 
+#include "bin/bin.h"
 #include "bin/projectclip.h"
 #include "bin/projectitemmodel.h"
 #include "core.h"
@@ -17,6 +18,8 @@
 #include "timeline2/model/timelineitemmodel.hpp"
 #include "timeline2/view/timelinewidget.h"
 
+#include <KActionCollection>
+#include <QAction>
 #include <QApplication>
 #include <QDateTime>
 #include <QFile>
@@ -336,4 +339,58 @@ void KdenliveScript::quit()
         }
         qApp->quit();
     });
+}
+
+bool KdenliveScript::triggerAction(const QString &name)
+{
+    if (!pCore || !pCore->window()) {
+        nlog(QStringLiteral("triggerAction('%1'): no window").arg(name));
+        return false;
+    }
+    QAction *a = pCore->window()->actionCollection()->action(name);
+    if (!a) {
+        nlog(QStringLiteral("triggerAction('%1'): no such action").arg(name));
+        return false;
+    }
+    a->trigger();
+    nlog(QStringLiteral("triggerAction('%1'): triggered").arg(name));
+    return true;
+}
+
+bool KdenliveScript::newSequence(int videoTracks, int audioTracks)
+{
+    if (!pCore || !pCore->currentDoc() || !pCore->bin()) {
+        nlog(QStringLiteral("newSequence: no document/bin"));
+        return false;
+    }
+    // buildSequenceClip(aTracks, vTracks); -1 == Kdenlive's default track counts.
+    pCore->bin()->buildSequenceClip(audioTracks, videoTracks);
+    nlog(QStringLiteral("newSequence(v=%1, a=%2): created").arg(videoTracks).arg(audioTracks));
+    return true;
+}
+
+QString KdenliveScript::newProjectProfile(const QString &profilePath)
+{
+    nlog(QStringLiteral("newProjectProfile('%1')").arg(profilePath));
+    if (!pCore || !pCore->projectManager()) {
+        return QStringLiteral("error");
+    }
+    KdenliveDoc *doc = pCore->currentDoc();
+    if (doc && doc->isModified()) {
+        // Never let newFile() pop a modal "save changes?" dialog (it blocks the
+        // bridge). Auto-save when the project already has a path; refuse an
+        // untitled+modified one so we never discard unsaved work silently.
+        if (doc->url().isEmpty()) {
+            nlog(QStringLiteral("newProjectProfile: current project is untitled+modified -> unsaved"));
+            return QStringLiteral("unsaved");
+        }
+        if (!pCore->projectManager()->saveFile()) {
+            nlog(QStringLiteral("newProjectProfile: auto-save of current project failed"));
+            return QStringLiteral("savefailed");
+        }
+    }
+    pCore->projectManager()->newFile(profilePath, false);
+    const bool ok = pCore->currentDoc() != nullptr;
+    nlog(QStringLiteral("newProjectProfile: newFile -> %1").arg(ok ? QStringLiteral("ok") : QStringLiteral("error")));
+    return ok ? QStringLiteral("ok") : QStringLiteral("error");
 }
