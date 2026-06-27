@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
-<kpartgui name="kdenlive" version="252" translationDomain="kdenlive">
+<kpartgui name="kdenlive" version="254" translationDomain="kdenlive">
   <MenuBar>
     <Menu name="file">
       <Action name="file_new"/>
@@ -205,6 +205,7 @@
         <Action name="audio_recognition"/>
         <Action name="generate_karaoke_captions"/>
         <Action name="caption_settings"/>
+        <Action name="restyle_captions"/>
       </Menu>
       <Separator/>
       <Menu name="timeline_preview" icon="preview-render-on">
@@ -358,6 +359,8 @@
     <Action name="timeline_settings"/>
     <Action name="timeline_mode"/>
     <Action name="use_timeline_zone_in_edit"/>
+    <Separator/>
+    <Action name="playback_mode"/>
     <Separator/>
     <Action name="select_tool"/>
     <Action name="razor_tool"/>

@@ -14,6 +14,7 @@
 #include "monitor/monitor.h"
 #include "monitor/monitormanager.h"
 #include "profiles/profilemodel.hpp"
+#include "profiles/profilerepository.hpp"
 #include "project/projectmanager.h"
 #include "timeline2/model/timelineitemmodel.hpp"
 #include "timeline2/view/timelinewidget.h"
@@ -31,6 +32,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 
 // Nuldrums scripting log: every D-Bus call records args/results/failures here so the
 // controlling agent can see exactly what happened (Kdenlive otherwise swallows stderr).
@@ -369,9 +372,8 @@ bool KdenliveScript::newSequence(int videoTracks, int audioTracks)
     return true;
 }
 
-QString KdenliveScript::newProjectProfile(const QString &profilePath)
+QString KdenliveScript::openNewProjectWithProfile(const QString &profilePath)
 {
-    nlog(QStringLiteral("newProjectProfile('%1')").arg(profilePath));
     if (!pCore || !pCore->projectManager()) {
         return QStringLiteral("error");
     }
@@ -381,16 +383,62 @@ QString KdenliveScript::newProjectProfile(const QString &profilePath)
         // bridge). Auto-save when the project already has a path; refuse an
         // untitled+modified one so we never discard unsaved work silently.
         if (doc->url().isEmpty()) {
-            nlog(QStringLiteral("newProjectProfile: current project is untitled+modified -> unsaved"));
+            nlog(QStringLiteral("openNewProjectWithProfile: current project is untitled+modified -> unsaved"));
             return QStringLiteral("unsaved");
         }
         if (!pCore->projectManager()->saveFile()) {
-            nlog(QStringLiteral("newProjectProfile: auto-save of current project failed"));
+            nlog(QStringLiteral("openNewProjectWithProfile: auto-save of current project failed"));
             return QStringLiteral("savefailed");
         }
     }
     pCore->projectManager()->newFile(profilePath, false);
     const bool ok = pCore->currentDoc() != nullptr;
-    nlog(QStringLiteral("newProjectProfile: newFile -> %1").arg(ok ? QStringLiteral("ok") : QStringLiteral("error")));
     return ok ? QStringLiteral("ok") : QStringLiteral("error");
+}
+
+QString KdenliveScript::newProjectProfile(const QString &profilePath)
+{
+    nlog(QStringLiteral("newProjectProfile('%1')").arg(profilePath));
+    const QString res = openNewProjectWithProfile(profilePath);
+    nlog(QStringLiteral("newProjectProfile -> %1").arg(res));
+    return res;
+}
+
+QString KdenliveScript::newProjectFormat(int width, int height, double fps)
+{
+    nlog(QStringLiteral("newProjectFormat(%1x%2 @ %3fps)").arg(width).arg(height).arg(fps));
+    if (width <= 0 || height <= 0 || fps <= 0) {
+        return QStringLiteral("error");
+    }
+    // Derive frame_rate_num/den, handling common NTSC fractional rates (29.97, 23.976, 59.94).
+    int fpsNum;
+    int fpsDen;
+    const int rounded = static_cast<int>(std::lround(fps));
+    if (std::fabs(fps - rounded) < 0.005) {
+        fpsNum = rounded;
+        fpsDen = 1;
+    } else if (std::fabs(fps - (rounded * 1000.0 / 1001.0)) < 0.02) {
+        fpsNum = rounded * 1000;
+        fpsDen = 1001;
+    } else {
+        fpsNum = static_cast<int>(std::lround(fps * 1000.0));
+        fpsDen = 1000;
+    }
+    // Square pixels (SAR 1:1); display aspect = width:height reduced.
+    const int g = std::max(1, std::gcd(width, height));
+    ProfileParam param(width, height, fpsNum, fpsDen, width / g, height / g, 1, 1, 709, false);
+    param.m_description = QStringLiteral("%1x%2 %3fps").arg(width).arg(height).arg(fps, 0, 'g', 6);
+    // Reuse an identical existing MLT profile if there is one, else save a custom profile.
+    QString path = ProfileRepository::get()->findMatchingProfile(&param);
+    if (path.isEmpty()) {
+        path = ProfileRepository::get()->saveProfile(&param);
+    }
+    if (path.isEmpty()) {
+        nlog(QStringLiteral("newProjectFormat: could not resolve or save a matching profile"));
+        return QStringLiteral("error");
+    }
+    nlog(QStringLiteral("newProjectFormat: using profile '%1'").arg(path));
+    const QString res = openNewProjectWithProfile(path);
+    nlog(QStringLiteral("newProjectFormat -> %1").arg(res));
+    return res;
 }

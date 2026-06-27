@@ -310,6 +310,11 @@ void MonitorManager::pauseActiveMonitor()
 void MonitorManager::slotPlay()
 {
     if (m_activeMonitor) {
+        // Apply the timeline spacebar playback mode (From Cursor / From Cue) only when
+        // the project monitor is about to *start* playing — not when pausing.
+        if (m_activeMonitor == m_projectMonitor && !m_projectMonitor->isPlaying()) {
+            pCore->window()->seekForPlaybackMode();
+        }
         m_activeMonitor->slotPlay();
     }
 }

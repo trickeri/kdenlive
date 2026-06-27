@@ -358,11 +358,18 @@ Rectangle {
     }
 
     function verticalScroll(wheel) {
-        var initialY = scrollView.contentY
+        // Step one track per wheel notch (was ~2). Scale the move to a single track's
+        // height: a full 120-delta notch advances exactly one track, finer deltas
+        // (touchpads) move proportionally.
+        var refIx = Logic.getTrackIndexFromPos(Math.max(0, scrollView.contentY))
+        var refTrack = tracksRepeater.itemAt(refIx)
+        var step = (refTrack && refTrack.height > 0) ? refTrack.height : Math.max(28, K.UiUtils.baseSizeMedium * 2)
+        var delta = step * (wheel.angleDelta.y / 120)
+        var maxY = trackHeaders.height + subtitleTrackHeader.height - tracksArea.height + horZoomBar.height + ruler.height
         if (wheel.angleDelta.y < 0) {
-            scrollView.contentY = Math.max(0, Math.min(scrollView.contentY - wheel.angleDelta.y, trackHeaders.height + subtitleTrackHeader.height - tracksArea.height + horZoomBar.height + ruler.height))
+            scrollView.contentY = Math.max(0, Math.min(scrollView.contentY - delta, maxY))
         } else {
-            scrollView.contentY = Math.max(scrollView.contentY - wheel.angleDelta.y, 0)
+            scrollView.contentY = Math.max(scrollView.contentY - delta, 0)
         }
         if (dragProxyArea.pressed && dragProxy.draggedItem > -1) {
             dragProxyArea.moveItem()
@@ -1528,7 +1535,10 @@ function getTrackColor(audio, header) {
                         if (root.razorSnapping > 0) {
                             cutFrame = root.controller.suggestSnapPoint(Math.round(cutFrame), root.razorSnapping)
                         }
-                        if (y >= 0) {
+                        if (K.Core.toolAllTracks) {
+                            // "All" mode: cut every clip (audio + video) across every track.
+                            root.timeline.cutAllClipsUnderCursor(cutFrame)
+                        } else if (y >= 0) {
                             let track = tracksRepeater.itemAt(Logic.getTrackIndexFromPos(y)) as Track
                             root.timeline.cutClipUnderCursor(cutFrame, track.trackInternalId)
                         } else if (subtitleTrack.height > 0) {
@@ -1980,6 +1990,32 @@ function getTrackColor(audio, header) {
                                 visible: width > playhead.width
                             }
                         }
+                        Canvas {
+                            // Play-cue flag (From Cue mode): a red, right-pointing triangle in the
+                            // ruler bar; its tip sits on the cue frame.
+                            id: cuePlayhead
+                            property int cueFrame: K.Core.playbackCue
+                            visible: cueFrame >= 0
+                            height: Math.round(K.UiUtils.baseSizeMedium * .8)
+                            width: Math.round(K.UiUtils.baseSizeMedium * .7)
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: ruler.zoneHeight - 1
+                            x: Math.round(cueFrame * root.timeScale) - width
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.reset()
+                                ctx.fillStyle = "#e6332a"
+                                ctx.beginPath()
+                                ctx.moveTo(0, 0)
+                                ctx.lineTo(0, height)
+                                ctx.lineTo(width, height / 2)
+                                ctx.closePath()
+                                ctx.fill()
+                            }
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onVisibleChanged: if (visible) requestPaint()
+                        }
                     }
                 }
                 MouseArea {
@@ -2148,6 +2184,12 @@ function getTrackColor(audio, header) {
                                         if (singleSelection || root.timeline.selection.indexOf(dragProxy.draggedItem) === -1) {
                                             doubleClickTimer.start()
                                             root.controller.requestAddToSelection(dragProxy.draggedItem, /*clear=*/ !(mouse.modifiers & Qt.ShiftModifier), /*single item selection */ singleSelection)
+                                        }
+                                        if (K.Core.toolAllTracks && !singleSelection) {
+                                            // Select tool "All" mode: extend selection to the whole vertical
+                                            // column — every clip across every track under the click point.
+                                            var columnFrame = Math.round((parent.x + mouse.x) / root.timeScale)
+                                            root.timeline.selectAllClipsAtPosition(columnFrame, /*add=*/ true)
                                         }
                                         root.timeline.showAsset(dragProxy.draggedItem)
                                         root.blockAutoScroll = true

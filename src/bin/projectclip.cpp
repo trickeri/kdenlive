@@ -207,7 +207,12 @@ std::shared_ptr<ProjectClip> ProjectClip::construct(const QString &id, const QDo
 
 ProjectClip::~ProjectClip()
 {
-    if (pCore->currentDoc()->closing) {
+    // A ProjectClip's last shared_ptr can be released on the QML render thread during
+    // application shutdown, *after* Core/the document have been torn down. Dereferencing
+    // pCore->currentDoc() unconditionally then segfaults (harmless on-exit crash report).
+    // Short-circuit the global deref so a late release is safe.
+    KdenliveDoc *doc = pCore ? pCore->currentDoc() : nullptr;
+    if (doc && doc->closing) {
         for (auto &p : m_audioProducers) {
             m_effectStack->removeService(p.second);
         }

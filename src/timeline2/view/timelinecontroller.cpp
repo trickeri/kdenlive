@@ -2114,6 +2114,26 @@ void TimelineController::cutAllClipsUnderCursor(int position)
     TimelineFunctions::requestClipCutAll(m_model, position);
 }
 
+void TimelineController::selectAllClipsAtPosition(int position, bool add)
+{
+    if (position == -1) {
+        position = pCore->getMonitorPosition();
+    }
+    std::unordered_set<int> ids;
+    if (add) {
+        const auto current = m_model->getCurrentSelection();
+        ids.insert(current.begin(), current.end());
+    }
+    const std::unordered_set<int> tracks = m_model->getAllTracksIds();
+    for (int trackId : tracks) {
+        int cid = m_model->getClipByPosition(trackId, position);
+        if (cid >= 0) {
+            ids.insert(cid);
+        }
+    }
+    m_model->requestSetSelection(ids);
+}
+
 int TimelineController::requestSpacerStartOperation(int trackId, int position)
 {
     QMutexLocker lk(&m_metaMutex);

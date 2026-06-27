@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #endif
 #include <QDockWidget>
 #include <QEvent>
+#include <QIcon>
 #include <QImage>
 #include <QMap>
 #include <QProcessEnvironment>
@@ -178,9 +179,17 @@ public:
     void loadBins(QStringList binInfo);
 
     ToolType::ProjectTool activeTool();
+    /** @brief True when the currently active tool (Razor/Select) is in "All tracks" mode. */
+    bool toolAllTracks() const;
 
     /** @brief Hide subtitle track and delete its temporary file*/
     void resetSubtitles(const QUuid &uuid);
+
+    /** @brief Before the project monitor starts playing, move the playhead per the active
+     *  spacebar playback mode (From Cursor / From Cue). No-op in Continue mode. */
+    void seekForPlaybackMode();
+    /** @brief Current From-Cue play point in frames, or -1 if unset (QML-facing). */
+    int playbackCue() const { return m_playbackCue; }
 
     /** @brief Show current tool key combination in status bar */
     void showToolMessage();
@@ -351,6 +360,21 @@ private:
     QLabel *m_trimLabel;
     QActionGroup *m_scaleGroup;
     ToolType::ProjectTool m_activeTool;
+    /** @brief Per-tool "All tracks" toggle (Razor/Select). Cycled by re-pressing the tool shortcut. */
+    bool m_razorAllTracks{false};
+    bool m_selectAllTracks{false};
+    /** @brief Compose a tool icon with a small "A"/"S" mode badge in the bottom-right corner. */
+    QIcon toolIconWithBadge(const QString &baseTheme, bool allMode) const;
+    /** @brief Refresh the Razor/Select toolbar icons to match their current All/Single mode. */
+    void updateToolModeIcons();
+    /** @brief Spacebar playback start mode for the timeline/project monitor. */
+    enum class PlaybackMode { Continue, FromCursor, FromCue };
+    PlaybackMode m_playbackMode{PlaybackMode::Continue};
+    /** @brief Fixed cue point (frames) used by PlaybackMode::FromCue. -1 = unset. */
+    int m_playbackCue{-1};
+    QAction *m_buttonPlaybackMode{nullptr};
+    /** @brief Refresh the playback-mode toolbar button icon/tooltip to match m_playbackMode. */
+    void updatePlaybackModeButton();
     /** @brief Store latest mouse position in timeline. */
     int m_mousePosition;
 
@@ -411,6 +435,9 @@ public Q_SLOTS:
     void slotGenerateKaraokeCaptions();
     /** @brief Open the standalone NulCaption settings window (nulcaption-settings). */
     void slotOpenCaptionSettings();
+    /** @brief Restyle/reposition the existing subtitle track in place from the current
+     *  NulCaption settings (no re-transcription) — shells `nulcaption restyle` and reloads. */
+    void slotRestyleCaptions();
     /** @brief Show/hide subtitle track. */
     void slotShowSubtitles(bool show);
     void slotTranscode(const QStringList &urls = QStringList());
@@ -523,6 +550,10 @@ private Q_SLOTS:
     void slotSelectTimelineTransition();
     void slotDeselectTimelineClip();
     void slotDeselectTimelineTransition();
+    /** @brief Cycle the spacebar playback mode: Continue -> From Cursor -> From Cue. */
+    void slotCyclePlaybackMode();
+    /** @brief Set the From-Cue play point to the current playhead and switch to From Cue mode. */
+    void slotSetPlayCue();
     void slotSelectAddTimelineClip();
     void slotSelectAddTimelineTransition();
     void slotAddEffect(QAction *result);

@@ -31,7 +31,8 @@ done
 
 reload_fork() {
   echo ">> [fork] building kdenlive ($BUILD_DIR)"
-  cmake --build "$BUILD_DIR" --target kdenlive -j"${JOBS:-$(nproc)}"
+  # Leave 2 cores free by default so a live stream's audio/encode isn't starved.
+  cmake --build "$BUILD_DIR" --target kdenlive -j"${JOBS:-$(( $(nproc) > 2 ? $(nproc) - 2 : 1 ))}"
   echo ">> [fork] force-installing -> $LOCAL_BIN/kdenlive"
   install -m755 "$BUILD_DIR/bin/kdenlive" "$LOCAL_BIN/kdenlive"
 }

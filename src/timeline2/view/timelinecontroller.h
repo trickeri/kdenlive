@@ -468,6 +468,9 @@ public:
     /** @brief Cuts all clips at timeline position
      */
     Q_INVOKABLE void cutAllClipsUnderCursor(int position = -1);
+    /** @brief Selects every clip across every track that overlaps @p position (vertical column).
+     *  @param add when true the column is added to the current selection, otherwise it replaces it. */
+    Q_INVOKABLE void selectAllClipsAtPosition(int position, bool add = false);
     /** @brief Request a spacer operation
      */
     Q_INVOKABLE int requestSpacerStartOperation(int trackId, int position);

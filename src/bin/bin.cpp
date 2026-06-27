@@ -3974,9 +3974,20 @@ void Bin::setupGeneratorMenu()
         m_inTimelineAction = m_menu->addMenu(addMenu);
     }
 
-    // NulCaption: word-by-word karaoke captions for the selected clip.
-    if (QAction *karaokeAction = pCore->window()->actionCollection()->action(QStringLiteral("generate_karaoke_captions"))) {
-        m_menu->addAction(karaokeAction);
+    // NulCaption: karaoke captions for the selected clip, plus quick access to the caption
+    // settings window and an in-place restyle/reposition of existing captions.
+    {
+        KActionCollection *coll = pCore->window()->actionCollection();
+        bool addedKaraoke = false;
+        for (const QString &name : {QStringLiteral("generate_karaoke_captions"), QStringLiteral("caption_settings"), QStringLiteral("restyle_captions")}) {
+            if (QAction *a = coll->action(name)) {
+                if (!addedKaraoke) {
+                    m_menu->addSeparator();
+                    addedKaraoke = true;
+                }
+                m_menu->addAction(a);
+            }
+        }
     }
 
     if (m_locateAction) {

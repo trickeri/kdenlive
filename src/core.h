@@ -74,6 +74,8 @@ class /*KDENLIVECORE_EXPORT*/ Core : public QObject
     QML_SINGLETON
 
     Q_PROPERTY(ToolType::ProjectTool activeTool READ activeTool NOTIFY activeToolChanged FINAL)
+    Q_PROPERTY(bool toolAllTracks READ toolAllTracks NOTIFY activeToolChanged FINAL)
+    Q_PROPERTY(int playbackCue READ playbackCue NOTIFY playbackCueChanged FINAL)
 
 public:
     friend class KdenliveDoc;
@@ -160,6 +162,10 @@ public:
     /** @brief Returns a pointer to the audio mixer. */
     MixerManager *mixer();
     ToolType::ProjectTool activeTool();
+    /** @brief True when the active Razor/Select tool is in "All tracks" mode (QML-facing). */
+    bool toolAllTracks();
+    /** @brief Current From-Cue play point in frames, or -1 if unset (QML-facing). */
+    int playbackCue();
 
     /** @brief Returns a pointer to MLT's repository */
     std::unique_ptr<Mlt::Repository> &getMltRepository();
@@ -495,6 +501,8 @@ Q_SIGNALS:
     void centeredPlayheadChanged();
     /** @brief The currently active editing tool changed */
     void activeToolChanged();
+    /** @brief The From-Cue play point moved or was set/cleared */
+    void playbackCueChanged();
     /** @brief Update the message about the current loading progress */
     void loadingMessageNewStage(const QString &message, int max = -1);
     /** @brief Increase the progress of the loading message by 1 */

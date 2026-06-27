@@ -942,6 +942,16 @@ ToolType::ProjectTool Core::activeTool()
     return m_mainWindow->activeTool();
 }
 
+bool Core::toolAllTracks()
+{
+    return m_mainWindow->toolAllTracks();
+}
+
+int Core::playbackCue()
+{
+    return m_mainWindow->playbackCue();
+}
+
 const QUuid Core::currentTimelineId() const
 {
     if (m_projectManager->getTimeline()) {

@@ -121,6 +121,8 @@ SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 #include <QFileDialog>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScreen>
 #include <QStandardPaths>
@@ -1385,12 +1387,12 @@ void MainWindow::setupActions()
     connect(m_buttonSubtitleEditTool, &QAction::triggered, this, &MainWindow::slotShowSubtitles);
 
     // create tools buttons
-    m_buttonSelectTool = new QAction(QIcon::fromTheme(QStringLiteral("cursor-arrow")), i18n("Selection Tool"), this);
+    m_buttonSelectTool = new QAction(toolIconWithBadge(QStringLiteral("cursor-arrow"), m_selectAllTracks), i18n("Selection Tool"), this);
     // toolbar->addAction(m_buttonSelectTool);
     m_buttonSelectTool->setCheckable(true);
     m_buttonSelectTool->setChecked(true);
 
-    m_buttonRazorTool = new QAction(QIcon::fromTheme(QStringLiteral("edit-cut")), i18n("Razor Tool"), this);
+    m_buttonRazorTool = new QAction(toolIconWithBadge(QStringLiteral("edit-cut"), m_razorAllTracks), i18n("Razor Tool"), this);
     // toolbar->addAction(m_buttonRazorTool);
     m_buttonRazorTool->setCheckable(true);
     m_buttonRazorTool->setChecked(false);
@@ -1678,6 +1680,15 @@ void MainWindow::setupActions()
     addAction(QStringLiteral("slip_tool"), m_buttonSlipTool, {}, toolsActionCategory);
     addAction(QStringLiteral("multicam_tool"), m_buttonMulticamTool, {}, toolsActionCategory);
     // addAction(QStringLiteral("slide_tool"), m_buttonSlideTool);
+
+    // Spacebar playback mode: a clickable timeline-toolbar indicator that cycles
+    // Continue -> From Cursor -> From Cue (also bound to "\"); plus a "set cue" action.
+    m_buttonPlaybackMode = new QAction(this);
+    addAction(QStringLiteral("playback_mode"), m_buttonPlaybackMode, Qt::Key_Backslash, toolsActionCategory);
+    connect(m_buttonPlaybackMode, &QAction::triggered, this, &MainWindow::slotCyclePlaybackMode);
+    updatePlaybackModeButton();
+    addAction(QStringLiteral("set_play_cue"), i18n("Set Play Cue at Playhead"), this, SLOT(slotSetPlayCue()), QIcon::fromTheme(QStringLiteral("flag-red")),
+              Qt::SHIFT | Qt::Key_Backslash, QStringLiteral("navandplayback"));
 
     addAction(QStringLiteral("automatic_transition"), m_buttonTimelineTags);
     addAction(QStringLiteral("show_video_thumbs"), m_buttonVideoThumbs);
@@ -2251,6 +2262,8 @@ void MainWindow::setupActions()
               QIcon::fromTheme(QStringLiteral("add-subtitle")));
     addAction(QStringLiteral("caption_settings"), i18n("Caption Settings…"), this, SLOT(slotOpenCaptionSettings()),
               QIcon::fromTheme(QStringLiteral("configure")));
+    addAction(QStringLiteral("restyle_captions"), i18n("Restyle Captions from Settings"), this, SLOT(slotRestyleCaptions()),
+              QIcon::fromTheme(QStringLiteral("edit-paint")));
     addAction(QStringLiteral("delete_subtitle_clip"), i18n("Delete Subtitle"), this, SLOT(slotDeleteItem()), QIcon::fromTheme(QStringLiteral("edit-delete")));
     addAction(QStringLiteral("audio_recognition"), i18n("Speech Recognition…"), this, SLOT(slotSpeechRecognition()),
               QIcon::fromTheme(QStringLiteral("autocorrection")));
@@ -3791,7 +3804,66 @@ void MainWindow::slotChangeTool(QAction *action)
     if (action == m_buttonMulticamTool) {
         activeTool = ToolType::MulticamTool;
     };
+    // Premiere-style: re-pressing the shortcut of the already-active Razor/Select tool
+    // cycles its "All tracks" mode (Single <-> All) instead of doing nothing.
+    if (activeTool == m_activeTool && (activeTool == ToolType::RazorTool || activeTool == ToolType::SelectTool)) {
+        bool &flag = (activeTool == ToolType::RazorTool) ? m_razorAllTracks : m_selectAllTracks;
+        flag = !flag;
+        updateToolModeIcons();
+        Q_EMIT pCore->activeToolChanged();
+        const QString toolName = (activeTool == ToolType::RazorTool) ? i18n("Razor") : i18n("Select");
+        pCore->displayMessage(flag ? i18n("%1: all tracks", toolName) : i18n("%1: single track", toolName), InformationMessage, 1500);
+        return;
+    }
     slotSetTool(activeTool);
+}
+
+bool MainWindow::toolAllTracks() const
+{
+    if (m_activeTool == ToolType::RazorTool) {
+        return m_razorAllTracks;
+    }
+    if (m_activeTool == ToolType::SelectTool) {
+        return m_selectAllTracks;
+    }
+    return false;
+}
+
+QIcon MainWindow::toolIconWithBadge(const QString &baseTheme, bool allMode) const
+{
+    const int sz = 48;
+    QPixmap pix = QIcon::fromTheme(baseTheme).pixmap(sz, sz);
+    if (pix.isNull()) {
+        pix = QPixmap(sz, sz);
+        pix.fill(Qt::transparent);
+    }
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const int d = int(sz * 0.66);
+    const QRectF badge(sz - d, sz - d, d - 1, d - 1);
+    // Cyan disc for "All" (matches the fork's accent), neutral grey for "Single".
+    const QColor fill = allMode ? QColor(0, 200, 255) : QColor(90, 90, 90);
+    p.setPen(QPen(QColor(0, 0, 0, 180), 1.5));
+    p.setBrush(fill);
+    p.drawEllipse(badge);
+    QFont f = p.font();
+    f.setPixelSize(int(d * 0.74));
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(allMode ? Qt::black : Qt::white);
+    p.drawText(badge, Qt::AlignCenter, allMode ? QStringLiteral("A") : QStringLiteral("S"));
+    p.end();
+    return QIcon(pix);
+}
+
+void MainWindow::updateToolModeIcons()
+{
+    if (m_buttonSelectTool) {
+        m_buttonSelectTool->setIcon(toolIconWithBadge(QStringLiteral("cursor-arrow"), m_selectAllTracks));
+    }
+    if (m_buttonRazorTool) {
+        m_buttonRazorTool->setIcon(toolIconWithBadge(QStringLiteral("edit-cut"), m_razorAllTracks));
+    }
 }
 
 void MainWindow::slotChangeEdit(QAction *action)
@@ -4668,6 +4740,75 @@ void MainWindow::slotAlignPlayheadToMousePos()
     getCurrentTimeline()->controller()->seekToMouse();
 }
 
+void MainWindow::updatePlaybackModeButton()
+{
+    if (!m_buttonPlaybackMode) {
+        return;
+    }
+    QString icon;
+    QString label;
+    switch (m_playbackMode) {
+    case PlaybackMode::FromCursor:
+        icon = QStringLiteral("input-mouse");
+        label = i18n("From Cursor");
+        break;
+    case PlaybackMode::FromCue:
+        icon = QStringLiteral("flag-red");
+        label = i18n("From Cue");
+        break;
+    case PlaybackMode::Continue:
+    default:
+        icon = QStringLiteral("media-playback-start");
+        label = i18n("Continue");
+        break;
+    }
+    m_buttonPlaybackMode->setIcon(QIcon::fromTheme(icon));
+    m_buttonPlaybackMode->setText(i18n("Playback: %1", label));
+    m_buttonPlaybackMode->setToolTip(i18n("Spacebar playback: %1 (press \\ to cycle)", label));
+}
+
+void MainWindow::slotCyclePlaybackMode()
+{
+    switch (m_playbackMode) {
+    case PlaybackMode::Continue:
+        m_playbackMode = PlaybackMode::FromCursor;
+        break;
+    case PlaybackMode::FromCursor:
+        m_playbackMode = PlaybackMode::FromCue;
+        break;
+    case PlaybackMode::FromCue:
+    default:
+        m_playbackMode = PlaybackMode::Continue;
+        break;
+    }
+    updatePlaybackModeButton();
+    pCore->displayMessage(m_buttonPlaybackMode->text(), InformationMessage, 1500);
+}
+
+void MainWindow::slotSetPlayCue()
+{
+    // Cue is dropped where the mouse points on the timeline (not the playhead).
+    m_playbackCue = qMax(0, getCurrentTimeline()->controller()->getMousePos());
+    m_playbackMode = PlaybackMode::FromCue;
+    updatePlaybackModeButton();
+    Q_EMIT pCore->playbackCueChanged();
+    const QString tc = pCore->currentDoc() ? pCore->currentDoc()->timecode().getTimecodeFromFrames(m_playbackCue) : QString::number(m_playbackCue);
+    pCore->displayMessage(i18n("Play cue set at %1", tc), InformationMessage, 1500);
+}
+
+void MainWindow::seekForPlaybackMode()
+{
+    if (m_playbackMode == PlaybackMode::Continue || !pCore->currentDoc()) {
+        return;
+    }
+    TimelineController *ctrl = getCurrentTimeline()->controller();
+    if (m_playbackMode == PlaybackMode::FromCursor) {
+        ctrl->seekToMouse();
+    } else if (m_playbackMode == PlaybackMode::FromCue && m_playbackCue >= 0) {
+        ctrl->setPosition(m_playbackCue);
+    }
+}
+
 void MainWindow::triggerKey(QKeyEvent *ev)
 {
     // Hack: The QQuickWindow that displays fullscreen monitor does not integrate with QActions.
@@ -5287,6 +5428,53 @@ void MainWindow::slotOpenCaptionSettings()
     if (!QProcess::startDetached(QStringLiteral("nulcaption-settings"), {})) {
         pCore->displayMessage(i18n("Could not start 'nulcaption-settings' — is nulcaption installed? (run nulcaption-setup once)"), ErrorMessage);
     }
+}
+
+void MainWindow::slotRestyleCaptions()
+{
+    // Apply the current NulCaption appearance/position settings to the EXISTING subtitle
+    // track in place (no whisper pass): shell `nulcaption restyle <track.ass>`, then reload.
+    if (!getCurrentTimeline() || !getCurrentTimeline()->hasSubtitles()) {
+        pCore->displayMessage(i18n("No captions on the timeline to restyle"), ErrorMessage);
+        return;
+    }
+    std::shared_ptr<SubtitleModel> subModel = getCurrentTimeline()->model()->getSubtitleModel();
+    if (!subModel) {
+        pCore->displayMessage(i18n("No subtitle track to restyle"), ErrorMessage);
+        return;
+    }
+    // The working .ass is kept in sync with the model on every change (modelChanged).
+    const QString srcAss = subModel->getUrl();
+    if (srcAss.isEmpty() || !QFile::exists(srcAss)) {
+        pCore->displayMessage(i18n("Could not locate the caption file to restyle"), ErrorMessage);
+        return;
+    }
+    const QString tmpOut = QDir::temp().absoluteFilePath(QStringLiteral("nulcaption-restyle-%1.ass").arg(QDateTime::currentMSecsSinceEpoch()));
+
+    auto *job = new QProcess(this);
+    job->setProcessChannelMode(QProcess::MergedChannels);
+    connect(job, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this,
+            [this, job, tmpOut, subModel](int exitCode, QProcess::ExitStatus exitStatus) {
+                if (exitStatus == QProcess::NormalExit && exitCode == 0 && QFile::exists(tmpOut)) {
+                    // Replace the track with the restyled events (style name + override
+                    // tags round-trip through importSubtitle, same as generation).
+                    subModel->removeAllSubtitles();
+                    subModel->importSubtitle(tmpOut, 0, true);
+                    pCore->displayMessage(i18n("Captions restyled from current settings"), OperationCompletedMessage);
+                } else {
+                    pCore->displayMessage(QString(), OperationCompletedMessage); // dismiss spinner
+                    pCore->displayMessage(i18n("Caption restyle failed: %1", QString::fromUtf8(job->readAll())), ErrorMessage);
+                }
+                QFile::remove(tmpOut);
+                job->deleteLater();
+            });
+    job->start(QStringLiteral("nulcaption"), {QStringLiteral("restyle"), srcAss, QStringLiteral("--out"), tmpOut});
+    if (!job->waitForStarted(3000)) {
+        pCore->displayMessage(i18n("Could not start 'nulcaption' — is it installed and on PATH?"), ErrorMessage);
+        job->deleteLater();
+        return;
+    }
+    pCore->displayMessage(i18n("Restyling captions…"), ProcessingJobMessage);
 }
 
 void MainWindow::slotAddSubtitle(const QString &text)

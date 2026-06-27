@@ -76,4 +76,17 @@ public Q_SLOTS:
      *  has a path; an untitled+modified one is refused. Returns "ok" | "unsaved"
      *  (save the current project first) | "savefailed" | "error". */
     Q_SCRIPTABLE QString newProjectProfile(const QString &profilePath);
+    /** @brief Create a new project at an explicit pixel size and frame rate (e.g.
+     *  newProjectFormat(1080, 1920, 30) for vertical 1080p @ 30fps). Square pixels,
+     *  display aspect derived from width:height, progressive. Reuses a matching MLT
+     *  profile if one exists, otherwise saves a custom one — so the agent never needs
+     *  to know a profile file path. Same save-guard/return values as newProjectProfile:
+     *  "ok" | "unsaved" | "savefailed" | "error". */
+    Q_SCRIPTABLE QString newProjectFormat(int width, int height, double fps);
+
+private:
+    /** @brief Shared tail for newProjectProfile/newProjectFormat: guard a modified
+     *  current project against a modal save prompt, then open an untitled project on
+     *  @p profilePath. Returns "ok" | "unsaved" | "savefailed" | "error". */
+    QString openNewProjectWithProfile(const QString &profilePath);
 };
