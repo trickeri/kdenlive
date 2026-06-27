@@ -92,6 +92,9 @@ GeometryWidget::GeometryWidget(Monitor *monitor, QPair<int, int> range, const QR
     // Lock ratio stuff
     m_lockRatio = new QAction(QIcon::fromTheme(QStringLiteral("link")), i18n("Lock aspect ratio"), parent);
     m_lockRatio->setCheckable(true);
+    // Nuldrums: lock aspect ratio by default so a clip scales like a Photoshop layer
+    // (the transform box keeps the source aspect instead of distorting/letterboxing).
+    m_lockRatio->setChecked(true);
     connect(m_lockRatio, &QAction::triggered, this, &GeometryWidget::slotLockRatio);
     auto *ratioButton = new QToolButton;
     ratioButton->setDefaultAction(m_lockRatio);
@@ -121,6 +124,11 @@ GeometryWidget::GeometryWidget(Monitor *monitor, QPair<int, int> range, const QR
     m_originalSize = new QAction(QIcon::fromTheme(QStringLiteral("zoom-original")), i18n("Adjust to original size"), parent);
     connect(m_originalSize, &QAction::triggered, this, &GeometryWidget::slotAdjustToSource);
     m_originalSize->setCheckable(true);
+    // Nuldrums: reference the clip's NATIVE source size (not the sequence) for Scale% and
+    // the transform box, so a clip bigger than the canvas (e.g. a 1440p clip in a 1080x1920
+    // sequence) scales/translates like a Photoshop layer instead of collapsing to the
+    // sequence shape. setChecked() doesn't emit triggered(), so it won't reset the rect.
+    m_originalSize->setChecked(true);
     QAction *adjustSize = new QAction(QIcon::fromTheme(QStringLiteral("zoom-fit-best")), i18n("Adjust and center in frame"), parent);
     connect(adjustSize, &QAction::triggered, this, &GeometryWidget::slotAdjustToFrameSize);
     QAction *fitToWidth = new QAction(QIcon::fromTheme(QStringLiteral("zoom-fit-width")), i18n("Fit to width"), parent);
@@ -695,6 +703,13 @@ bool GeometryWidget::connectMonitor(bool activate, bool singleKeyframe)
         connect(m_monitor, &Monitor::effectRotationChanged, this, &GeometryWidget::slotUpdateRotation, Qt::UniqueConnection);
         QRect rect(m_spinX->value(), m_spinY->value(), m_spinWidth->value(), m_spinHeight->value());
         Q_EMIT updateMonitorGeometry(rect);
+        // Nuldrums: push the initial aspect-lock to the on-monitor scene so corner-drag
+        // keeps the source aspect (setChecked in the ctor doesn't fire slotLockRatio).
+        if (m_lockRatio->isChecked()) {
+            m_monitor->setEffectSceneProperty(QStringLiteral("lockratio"), m_originalSize->isChecked()
+                                                                               ? (double)m_sourceSize.width() / m_sourceSize.height()
+                                                                               : (double)m_defaultSize.width() / m_defaultSize.height());
+        }
     } else {
         m_monitor->setEffectKeyframe(false, true);
         disconnect(m_monitor, &Monitor::effectChanged, this, &GeometryWidget::slotUpdateGeometryRect);
