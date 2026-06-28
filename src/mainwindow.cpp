@@ -1690,6 +1690,14 @@ void MainWindow::setupActions()
     addAction(QStringLiteral("set_play_cue"), i18n("Set Play Cue at Playhead"), this, SLOT(slotSetPlayCue()), QIcon::fromTheme(QStringLiteral("flag-red")),
               Qt::SHIFT | Qt::Key_Backslash, QStringLiteral("navandplayback"));
 
+    // Delete-mode toggle: flips what the Delete key does between a normal delete
+    // (leaves a gap) and a ripple delete / extract (closes the gap). Shown by a
+    // clickable toolbar indicator next to the playback-mode button.
+    m_buttonDeleteMode = new QAction(this);
+    addAction(QStringLiteral("delete_mode"), m_buttonDeleteMode, Qt::SHIFT | Qt::Key_D, toolsActionCategory);
+    connect(m_buttonDeleteMode, &QAction::triggered, this, &MainWindow::slotToggleDeleteMode);
+    updateDeleteModeButton();
+
     addAction(QStringLiteral("automatic_transition"), m_buttonTimelineTags);
     addAction(QStringLiteral("show_video_thumbs"), m_buttonVideoThumbs);
     addAction(QStringLiteral("show_audio_thumbs"), m_buttonAudioThumbs);
@@ -2264,6 +2272,11 @@ void MainWindow::setupActions()
               QIcon::fromTheme(QStringLiteral("configure")));
     addAction(QStringLiteral("restyle_captions"), i18n("Restyle Captions from Settings"), this, SLOT(slotRestyleCaptions()),
               QIcon::fromTheme(QStringLiteral("edit-paint")));
+    // Word-clip caption editor: chain selected word-clips into one displayed line, or break the chain.
+    addAction(QStringLiteral("link_subtitles"), i18n("Link Caption Words"), this, SLOT(slotLinkSubtitles()), QIcon::fromTheme(QStringLiteral("link")),
+              Qt::CTRL | Qt::Key_L);
+    addAction(QStringLiteral("unlink_subtitles"), i18n("Unlink Caption Words"), this, SLOT(slotUnlinkSubtitles()),
+              QIcon::fromTheme(QStringLiteral("remove-link")), Qt::CTRL | Qt::Key_U);
     addAction(QStringLiteral("delete_subtitle_clip"), i18n("Delete Subtitle"), this, SLOT(slotDeleteItem()), QIcon::fromTheme(QStringLiteral("edit-delete")));
     addAction(QStringLiteral("audio_recognition"), i18n("Speech Recognition…"), this, SLOT(slotSpeechRecognition()),
               QIcon::fromTheme(QStringLiteral("autocorrection")));
@@ -3107,7 +3120,12 @@ void MainWindow::slotDeleteItem()
         }
 
         // effect stack has no focus
-        getCurrentTimeline()->controller()->deleteSelectedClips();
+        if (m_rippleDeleteMode) {
+            // Ripple-delete mode: extract (remove the selection and close the gap).
+            getCurrentTimeline()->controller()->extract();
+        } else {
+            getCurrentTimeline()->controller()->deleteSelectedClips();
+        }
     }
 }
 
@@ -3829,31 +3847,44 @@ bool MainWindow::toolAllTracks() const
     return false;
 }
 
-QIcon MainWindow::toolIconWithBadge(const QString &baseTheme, bool allMode) const
+QIcon MainWindow::composeBadgedIcon(const QString &baseTheme, const QString &letter, const QColor &fill, const QColor &textColor) const
 {
     const int sz = 48;
-    QPixmap pix = QIcon::fromTheme(baseTheme).pixmap(sz, sz);
-    if (pix.isNull()) {
-        pix = QPixmap(sz, sz);
-        pix.fill(Qt::transparent);
-    }
+    QPixmap glyph = QIcon::fromTheme(baseTheme).pixmap(sz, sz);
+    QPixmap pix(sz, sz);
+    pix.fill(Qt::transparent);
     QPainter p(&pix);
     p.setRenderHint(QPainter::Antialiasing, true);
-    const int d = int(sz * 0.66);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    // Draw the base glyph enlarged so the tool fills more of the toolbar cell
+    // (theme icons carry padding that otherwise leaves them looking small).
+    if (!glyph.isNull()) {
+        const int gs = int(sz * 1.18);
+        const int off = (sz - gs) / 2;
+        p.drawPixmap(QRect(off, off, gs, gs), glyph);
+    }
+    // Small badge tucked flush into the bottom-right corner so it overlaps the
+    // glyph as little as possible.
+    const int d = int(sz * 0.46);
     const QRectF badge(sz - d, sz - d, d - 1, d - 1);
-    // Cyan disc for "All" (matches the fork's accent), neutral grey for "Single".
-    const QColor fill = allMode ? QColor(0, 200, 255) : QColor(90, 90, 90);
     p.setPen(QPen(QColor(0, 0, 0, 180), 1.5));
     p.setBrush(fill);
     p.drawEllipse(badge);
     QFont f = p.font();
-    f.setPixelSize(int(d * 0.74));
+    f.setPixelSize(int(d * 0.80));
     f.setBold(true);
     p.setFont(f);
-    p.setPen(allMode ? Qt::black : Qt::white);
-    p.drawText(badge, Qt::AlignCenter, allMode ? QStringLiteral("A") : QStringLiteral("S"));
+    p.setPen(textColor);
+    p.drawText(badge, Qt::AlignCenter, letter);
     p.end();
     return QIcon(pix);
+}
+
+QIcon MainWindow::toolIconWithBadge(const QString &baseTheme, bool allMode) const
+{
+    // Cyan disc for "All" (matches the fork's accent), neutral grey for "Single".
+    const QColor fill = allMode ? QColor(0, 200, 255) : QColor(90, 90, 90);
+    return composeBadgedIcon(baseTheme, allMode ? QStringLiteral("A") : QStringLiteral("S"), fill, allMode ? Qt::black : Qt::white);
 }
 
 void MainWindow::updateToolModeIcons()
@@ -4796,6 +4827,30 @@ void MainWindow::slotSetPlayCue()
     pCore->displayMessage(i18n("Play cue set at %1", tc), InformationMessage, 1500);
 }
 
+void MainWindow::updateDeleteModeButton()
+{
+    if (!m_buttonDeleteMode) {
+        return;
+    }
+    if (m_rippleDeleteMode) {
+        // Red "R" badge to flag that Delete now ripple-deletes (closes the gap).
+        m_buttonDeleteMode->setIcon(composeBadgedIcon(QStringLiteral("edit-delete"), QStringLiteral("R"), QColor(230, 51, 42), Qt::white));
+        m_buttonDeleteMode->setText(i18n("Delete: Ripple"));
+        m_buttonDeleteMode->setToolTip(i18n("Delete key: ripple delete — closes the gap (press Shift+D to toggle)"));
+    } else {
+        m_buttonDeleteMode->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete")));
+        m_buttonDeleteMode->setText(i18n("Delete: Normal"));
+        m_buttonDeleteMode->setToolTip(i18n("Delete key: normal delete — leaves a gap (press Shift+D to toggle)"));
+    }
+}
+
+void MainWindow::slotToggleDeleteMode()
+{
+    m_rippleDeleteMode = !m_rippleDeleteMode;
+    updateDeleteModeButton();
+    pCore->displayMessage(m_buttonDeleteMode->text(), InformationMessage, 1500);
+}
+
 void MainWindow::seekForPlaybackMode()
 {
     if (m_playbackMode == PlaybackMode::Continue || !pCore->currentDoc()) {
@@ -5411,13 +5466,50 @@ void MainWindow::slotGenerateKaraokeCaptions()
     // Style, look (pop/sweep), VAD and line layout come from the NulCaption settings
     // window (Subtitles -> Caption Settings…), which the CLI reads as defaults — so we
     // pass no --preset/--style here, letting those settings take effect.
-    job->start(QStringLiteral("nulcaption"), {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--ass"), assOut});
+    job->start(QStringLiteral("nulcaption"),
+               {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--word-clips"), QStringLiteral("--ass"), assOut});
     if (!job->waitForStarted(3000)) {
         pCore->displayMessage(i18n("Could not start 'nulcaption' — is it installed and on PATH? (run nulcaption-setup once)"), ErrorMessage);
         job->deleteLater();
         return;
     }
     pCore->displayMessage(i18n("Generating karaoke captions…"), ProcessingJobMessage);
+}
+
+// Selected subtitle ids from the authoritative timeline selection (m_currentSelection
+// via getCurrentSelection), NOT the subtitle model's m_selected — that one wasn't a
+// reliable mirror of the live selection and linked the whole track.
+static QList<int> selectedSubtitleIdsFrom(const std::shared_ptr<TimelineItemModel> &model)
+{
+    QList<int> ids;
+    for (int id : model->getCurrentSelection()) {
+        if (model->isSubTitle(id)) {
+            ids << id;
+        }
+    }
+    return ids;
+}
+
+void MainWindow::slotLinkSubtitles()
+{
+    if (TimelineWidget *tl = getCurrentTimeline()) {
+        if (auto sub = tl->model()->getSubtitleModel()) {
+            const QList<int> ids = selectedSubtitleIdsFrom(tl->model());
+            qDebug() << "[link-subtitles] selected ids:" << ids;
+            sub->linkSubtitles(ids);
+        }
+    }
+}
+
+void MainWindow::slotUnlinkSubtitles()
+{
+    if (TimelineWidget *tl = getCurrentTimeline()) {
+        if (auto sub = tl->model()->getSubtitleModel()) {
+            const QList<int> ids = selectedSubtitleIdsFrom(tl->model());
+            qDebug() << "[unlink-subtitles] selected ids:" << ids;
+            sub->unlinkSubtitles(ids);
+        }
+    }
 }
 
 void MainWindow::slotOpenCaptionSettings()

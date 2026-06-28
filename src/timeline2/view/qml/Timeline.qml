@@ -1992,7 +1992,8 @@ function getTrackColor(audio, header) {
                         }
                         Canvas {
                             // Play-cue flag (From Cue mode): a red, right-pointing triangle in the
-                            // ruler bar; its tip sits on the cue frame.
+                            // ruler bar; its left (vertical) edge sits on the cue frame, so it
+                            // lines up with the playhead's centre line and points into playback.
                             id: cuePlayhead
                             property int cueFrame: K.Core.playbackCue
                             visible: cueFrame >= 0
@@ -2000,7 +2001,7 @@ function getTrackColor(audio, header) {
                             width: Math.round(K.UiUtils.baseSizeMedium * .7)
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: ruler.zoneHeight - 1
-                            x: Math.round(cueFrame * root.timeScale) - width
+                            x: Math.round(cueFrame * root.timeScale)
                             onPaint: {
                                 var ctx = getContext("2d")
                                 ctx.reset()
@@ -2730,6 +2731,7 @@ function getTrackColor(audio, header) {
             subtitle: model.subtitle
             isGrabbed: model.grabbed
             subLayer: model.layer
+            linkedNext: model.linkedNext
             timeline: root.timeline
             controller: root.controller
         }

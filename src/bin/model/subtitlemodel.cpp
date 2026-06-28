@@ -423,6 +423,12 @@ void SubtitleModel::parseSubtitle(const QString &workPath)
     }
     QString filePath = m_subtitleFilter->get("av.filename");
     importSubtitle(filePath, 0, false);
+    // Word-clip captions: after loading the per-word events, point the filter at the
+    // compiled karaoke render (no-op for ordinary subtitles).
+    const QString renderFile = compileKaraoke(filePath);
+    if (renderFile != filePath) {
+        m_subtitleFilter->set("av.filename", renderFile.toUtf8().constData());
+    }
     // jsontoSubtitle(toJson());
 }
 
@@ -522,6 +528,7 @@ QHash<int, QByteArray> SubtitleModel::roleNames() const
     roles[IsDialogueRole] = "isDialogue";
     roles[GrabRole] = "grabbed";
     roles[SelectedRole] = "selected";
+    roles[LinkedNextRole] = "linkedNext";
     return roles;
 }
 
@@ -568,6 +575,20 @@ QVariant SubtitleModel::data(const QModelIndex &index, int role) const
         return getSubtitleFakePosFromIndex(index.row());
     case GrabRole:
         return m_grabbedIds.contains(subInfo.first);
+    case LinkedNextRole: {
+        // Chained to the next clip if it exists, is on the same layer, and shares
+        // this clip's line group id (ASS Name, e.g. "L3").
+        const QString name = m_subtitleList.at(subInfo.second).name();
+        static const QRegularExpression groupRe(QStringLiteral("^L\\d+$"));
+        if (!groupRe.match(name).hasMatch()) {
+            return false;
+        }
+        const int nextId = getNextSub(subInfo.first);
+        if (nextId < 0) {
+            return false;
+        }
+        return getLayerForId(nextId) == subInfo.second.first && getName(nextId) == name;
+    }
     }
     return QVariant();
 }
@@ -1215,6 +1236,210 @@ void SubtitleModel::restoreTmpFile(int ix)
     m_subtitleFilter->set("av.filename", outFile.toUtf8().constData());
 }
 
+int SubtitleModel::captionY() const
+{
+    return m_subtitleFilter->property_exists("kdenlive:captionY") ? m_subtitleFilter->get_int("kdenlive:captionY") : -1;
+}
+
+void SubtitleModel::setCaptionY(int y)
+{
+    m_subtitleFilter->set("kdenlive:captionY", y);
+    // Recompile the karaoke render at the new Y (no-op for non word-clip subtitles)
+    // and refresh the monitor so the move is immediate.
+    const int ix = pCore->currentDoc()->getSequenceProperty(m_timeline->uuid(), QStringLiteral("kdenlive:activeSubtitleIndex"), QStringLiteral("0")).toInt();
+    const QString outFile = pCore->currentDoc()->subTitlePath(m_timeline->uuid(), ix, false);
+    const QString renderFile = compileKaraoke(outFile);
+    m_subtitleFilter->set("av.filename", renderFile.toUtf8().constData());
+    pCore->refreshProjectMonitorOnce();
+}
+
+// Mint the next free line-group number (max existing "L<n>" + 1).
+static int parseGroupNum(const QString &name)
+{
+    static const QRegularExpression re(QStringLiteral("^L(\\d+)$"));
+    const QRegularExpressionMatch m = re.match(name);
+    return m.hasMatch() ? m.captured(1).toInt() : -1;
+}
+
+void SubtitleModel::linkSubtitles(const QList<int> &ids)
+{
+    if (ids.size() < 2) {
+        return;
+    }
+    // Target group = the earliest selected clip's group (keep its line id), or a new one.
+    int earliest = -1;
+    GenTime earliestPos;
+    int maxGroup = -1;
+    for (const auto &sub : m_subtitleList) {
+        maxGroup = qMax(maxGroup, parseGroupNum(sub.second.name()));
+    }
+    for (int id : ids) {
+        if (!hasSubtitle(id)) {
+            continue;
+        }
+        const GenTime p = getStartPosForId(id);
+        if (earliest == -1 || p < earliestPos) {
+            earliest = id;
+            earliestPos = p;
+        }
+    }
+    if (earliest == -1) {
+        return;
+    }
+    const QString group = parseGroupNum(getName(earliest)) >= 0 ? getName(earliest) : QStringLiteral("L%1").arg(maxGroup + 1);
+    for (int id : ids) {
+        if (hasSubtitle(id)) {
+            setName(id, group, false);
+        }
+    }
+    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole});
+    jsontoSubtitle(toJson()); // rewrite edit file + recompile karaoke render + reattach filter
+    pCore->currentDoc()->setModified(true);
+    pCore->refreshProjectMonitorOnce();
+}
+
+QList<int> SubtitleModel::selectedSubtitleIds() const
+{
+    return m_selected;
+}
+
+void SubtitleModel::unlinkSubtitles(const QList<int> &ids)
+{
+    if (ids.isEmpty()) {
+        return;
+    }
+    int maxGroup = -1;
+    for (const auto &sub : m_subtitleList) {
+        maxGroup = qMax(maxGroup, parseGroupNum(sub.second.name()));
+    }
+    int k = 1;
+    for (int id : ids) {
+        if (hasSubtitle(id)) {
+            setName(id, QStringLiteral("L%1").arg(maxGroup + k), false);
+            ++k;
+        }
+    }
+    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole});
+    jsontoSubtitle(toJson());
+    pCore->currentDoc()->setModified(true);
+    pCore->refreshProjectMonitorOnce();
+}
+
+QString SubtitleModel::compileKaraoke(const QString &editFile)
+{
+    // Word-clip captions: per-word events tagged with a line id in the ASS Name
+    // field ("L0","L1"… from NulCaption --word-clips). Compile each group into a
+    // karaoke pop line (full line text per word, the spoken word highlighted) so
+    // libass shows the whole line while the model keeps one clip per word.
+    static const QRegularExpression groupRe(QStringLiteral("^L\\d+$"));
+    struct WordEv
+    {
+        GenTime start;
+        GenTime end;
+        QString text;
+        QString style;
+    };
+    std::vector<QString> order; // groups in time order
+    std::map<QString, std::vector<WordEv>> groups;
+    {
+        QReadLocker locker(&m_lock);
+        for (const auto &sub : m_subtitleList) {
+            const SubtitleEvent &ev = sub.second;
+            const QString name = ev.name();
+            if (!groupRe.match(name).hasMatch()) {
+                continue;
+            }
+            if (groups.find(name) == groups.end()) {
+                order.push_back(name);
+            }
+            groups[name].push_back({sub.first.second, ev.endTime(), ev.text(), ev.styleName()});
+        }
+    }
+    if (groups.empty()) {
+        return editFile; // not word-clip captions — render the file as-is
+    }
+
+    // Render in the SAME PlayRes the edit .ass declares (NulCaption writes 1920x1080),
+    // not the project frame — libass scales fontsize by frame_height/PlayResY, so using
+    // the frame size here shrank the font vs. the original captions. Fall back to frame.
+    const QSize frame = pCore->getCurrentFrameSize();
+    const auto prX = m_scriptInfo.find(QStringLiteral("PlayResX"));
+    const auto prY = m_scriptInfo.find(QStringLiteral("PlayResY"));
+    const int playW = prX != m_scriptInfo.end() ? prX->second.toInt() : frame.width();
+    const int playH = prY != m_scriptInfo.end() ? prY->second.toInt() : frame.height();
+    // Per-track caption Y (dial-in vertical position): when set (>=0) every line is
+    // centred at this Y via \pos, overriding the style alignment. -1 = use the style.
+    const int trackY = m_subtitleFilter->property_exists("kdenlive:captionY") ? m_subtitleFilter->get_int("kdenlive:captionY") : -1;
+    const QString outPath = editFile + QStringLiteral(".render.ass");
+    QFile outF(outPath);
+    if (!outF.open(QIODevice::WriteOnly)) {
+        return editFile;
+    }
+    QTextStream out(&outF);
+    out << QStringLiteral("[Script Info]\n; Karaoke render compiled by Kdenlive\nScriptType: v4.00+\nPlayResX: %1\nPlayResY: %2\nWrapStyle: 0\n"
+                          "ScaledBorderAndShadow: yes\n\n")
+               .arg(playW)
+               .arg(playH);
+    out << QStringLiteral("[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+                          "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, "
+                          "Encoding\n");
+    for (const auto &entry : std::as_const(m_subtitleStyles)) {
+        out << entry.second.toString(entry.first) << '\n';
+    }
+    out << QStringLiteral("\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+
+    auto assColour = [](const QColor &c) {
+        return QStringLiteral("&H%1%2%3&")
+            .arg(c.blue(), 2, 16, QLatin1Char('0'))
+            .arg(c.green(), 2, 16, QLatin1Char('0'))
+            .arg(c.red(), 2, 16, QLatin1Char('0'))
+            .toUpper();
+    };
+    auto tc = [](const GenTime &t) {
+        double s = qMax(0., t.seconds());
+        int cs = qRound(s * 100);
+        const int h = cs / 360000;
+        cs %= 360000;
+        const int m = cs / 6000;
+        cs %= 6000;
+        const int sec = cs / 100;
+        cs %= 100;
+        return QStringLiteral("%1:%2:%3.%4").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(sec, 2, 10, QLatin1Char('0')).arg(cs, 2, 10, QLatin1Char('0'));
+    };
+
+    for (const QString &gid : order) {
+        const std::vector<WordEv> &w = groups[gid];
+        if (w.empty()) {
+            continue;
+        }
+        const QString styleName = w.front().style;
+        const SubtitleStyle &style = getSubtitleStyle(styleName);
+        const QString hl = assColour(style.primaryColour());     // active word
+        const QString base = assColour(style.secondaryColour()); // resting words
+        QString prefix;
+        const int al = style.alignment();
+        if (trackY >= 0) {
+            // Track-level Y dial: centre every line at this height.
+            prefix = QStringLiteral("{\\an5\\pos(%1,%2)}").arg(playW / 2).arg(trackY);
+        } else if (al == 4 || al == 5 || al == 6) {
+            // libass ignores MarginV for middle alignment — position explicitly.
+            prefix = QStringLiteral("{\\an%1\\pos(%2,%3)}").arg(al).arg(playW / 2).arg(playH / 2 - style.marginV());
+        }
+        for (int j = 0; j < int(w.size()); ++j) {
+            QString text;
+            for (int k = 0; k < int(w.size()); ++k) {
+                if (k > 0) {
+                    text += QLatin1Char(' ');
+                }
+                text += QStringLiteral("{\\1c%1}%2").arg(k == j ? hl : base, w[k].text);
+            }
+            out << QStringLiteral("Dialogue: 0,%1,%2,%3,,0,0,0,,%4%5\n").arg(tc(w[j].start), tc(w[j].end), styleName, prefix, text);
+        }
+    }
+    outF.close();
+    return outPath;
+}
+
 void SubtitleModel::jsontoSubtitle(const QJsonArray &data)
 {
     int ix = pCore->currentDoc()->getSequenceProperty(m_timeline->uuid(), QStringLiteral("kdenlive:activeSubtitleIndex"), QStringLiteral("0")).toInt();
@@ -1226,7 +1451,9 @@ void SubtitleModel::jsontoSubtitle(const QJsonArray &data)
     int line = saveSubtitleData(data, outFile);
     qDebug() << "Saving subtitle filter: " << outFile;
     if (line > 0) {
-        m_subtitleFilter->set("av.filename", outFile.toUtf8().constData());
+        // Render the compiled karaoke file for word-clip captions, else the file itself.
+        const QString renderFile = compileKaraoke(outFile);
+        m_subtitleFilter->set("av.filename", renderFile.toUtf8().constData());
         m_timeline->tractor()->attach(*m_subtitleFilter.get());
     } else {
         m_timeline->tractor()->detach(*m_subtitleFilter.get());

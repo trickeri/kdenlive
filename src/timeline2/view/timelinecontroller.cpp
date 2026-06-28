@@ -3383,13 +3383,26 @@ void TimelineController::extract(int clipId, bool singleSelectionMode)
         std::function<bool(void)> undo = []() { return true; };
         std::function<bool(void)> redo = []() { return true; };
         if (m_model->isGroup(targetRoot)) {
+            // Snapshot the group's clips BEFORE touching the selection: clearing the
+            // selection below destroys the (Selection-type) group, but the clip ids
+            // stay valid. We must clear first because each extractZoneWithUndo runs
+            // breakAffectedGroups -> requestClipUngroup -> requestClearSelection; with
+            // a live multi-clip selection that hits stale entries (clips already
+            // extracted) and asserts/crashes. (nuldrums fix for ripple-delete-all.)
             std::unordered_set<int> sub = m_model->m_groups->getLeaves(targetRoot);
+            qDebug() << "[ripple-delete] extract group" << targetRoot << "clips" << sub.size();
+            m_model->requestClearSelection();
             // Create one command per clip
             for (int current_id : sub) {
                 if (m_model->isClip(current_id)) {
+                    int tk = m_model->getClipTrackId(current_id);
+                    if (tk == -1) {
+                        // Already removed by a prior extract (overlapping zone) — skip.
+                        qDebug() << "[ripple-delete] skip clip" << current_id << "(no track)";
+                        continue;
+                    }
                     int newIn = m_model->getClipPosition(current_id);
                     int newOut = newIn + m_model->getClipPlaytime(current_id);
-                    int tk = m_model->getClipTrackId(current_id);
                     std::pair<MixInfo, MixInfo> cMixData = m_model->getTrackById_const(tk)->getMixInfo(current_id);
                     if (cMixData.first.firstClipId > -1) {
                         // Clip has a start mix, adjust in point
@@ -3399,6 +3412,7 @@ void TimelineController::extract(int clipId, bool singleSelectionMode)
                         // Clip has end mix, adjust out point
                         newOut -= cMixData.second.mixOffset;
                     }
+                    qDebug() << "[ripple-delete] extract clip" << current_id << "track" << tk << "zone" << newIn << newOut;
                     TimelineFunctions::extractZoneWithUndo(m_model, {tk}, QPoint(newIn, newOut), false, clipToUngroup, clipsToRegroup, undo, redo);
                 }
             }

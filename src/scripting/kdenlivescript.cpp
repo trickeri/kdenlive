@@ -115,6 +115,21 @@ int KdenliveScript::addVideoTrack()
     return ok ? id : -1;
 }
 
+int KdenliveScript::addAudioTrack()
+{
+    if (!pCore || !pCore->currentDoc()) {
+        return -1;
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline) {
+        return -1;
+    }
+    int id = -1;
+    const bool ok = timeline->requestTrackInsertion(-1, id, QString(), true); // audio track
+    nlog(QStringLiteral("addAudioTrack: ok=%1 id=%2").arg(ok).arg(id));
+    return ok ? id : -1;
+}
+
 int KdenliveScript::videoTrackCount()
 {
     if (!pCore || !pCore->currentDoc()) {
@@ -127,9 +142,26 @@ int KdenliveScript::videoTrackCount()
     return timeline->getTracksIds(false).size();
 }
 
+int KdenliveScript::audioTrackCount()
+{
+    if (!pCore || !pCore->currentDoc()) {
+        return -1;
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline) {
+        return -1;
+    }
+    return timeline->getTracksIds(true).size();
+}
+
 int KdenliveScript::addClipToTrack(const QString &path, int videoTrackIndex, int position)
 {
-    nlog(QStringLiteral("addClipToTrack('%1', vtrack=%2, pos=%3)").arg(path).arg(videoTrackIndex).arg(position));
+    return addClipToTrackEx(path, videoTrackIndex, position, QString());
+}
+
+int KdenliveScript::addClipToTrackEx(const QString &path, int videoTrackIndex, int position, const QString &mode)
+{
+    nlog(QStringLiteral("addClipToTrackEx('%1', vtrack=%2, pos=%3, mode='%4')").arg(path).arg(videoTrackIndex).arg(position).arg(mode));
     if (!pCore || !pCore->currentDoc()) {
         nlog(QStringLiteral("addClipToTrack -> -10 (no document)"));
         return -10; // no document
@@ -159,10 +191,42 @@ int KdenliveScript::addClipToTrack(const QString &path, int videoTrackIndex, int
     // Order video tracks bottom-to-top so index 1 == V1 (bottom).
     std::sort(vids.begin(), vids.end(), [&timeline](int a, int b) { return timeline->getTrackPosition(a) < timeline->getTrackPosition(b); });
     const int trackId = vids.at(videoTrackIndex - 1);
+    // requestClipInsertion reads a V/A prefix on the bin id for video-/audio-only drops.
+    QString insertId = binId;
+    if (mode == QLatin1String("video")) {
+        insertId = QStringLiteral("V%1").arg(binId);
+    } else if (mode == QLatin1String("audio")) {
+        insertId = QStringLiteral("A%1").arg(binId);
+    }
     int id = -1;
-    const bool ok = timeline->requestClipInsertion(binId, trackId, position, id, true, true, false);
-    nlog(QStringLiteral("addClipToTrack: requestClipInsertion(track=%1) ok=%2 id=%3").arg(trackId).arg(ok).arg(id));
+    const bool ok = timeline->requestClipInsertion(insertId, trackId, position, id, true, true, false);
+    nlog(QStringLiteral("addClipToTrack: requestClipInsertion('%1', track=%2) ok=%3 id=%4").arg(insertId).arg(trackId).arg(ok).arg(id));
     return ok ? id : -14; // -14: requestClipInsertion failed
+}
+
+bool KdenliveScript::setClipActiveStreams(const QString &path, const QString &streams)
+{
+    nlog(QStringLiteral("setClipActiveStreams('%1', '%2')").arg(path, streams));
+    if (!pCore || !pCore->currentDoc()) {
+        return false;
+    }
+    const QStringList ids = pCore->projectItemModel()->getClipByUrl(QFileInfo(path));
+    if (ids.isEmpty()) {
+        nlog(QStringLiteral("setClipActiveStreams: clip not in bin"));
+        return false;
+    }
+    std::shared_ptr<ProjectClip> bc = pCore->projectItemModel()->getClipByBinID(ids.constFirst());
+    if (!bc) {
+        nlog(QStringLiteral("setClipActiveStreams: no bin clip"));
+        return false;
+    }
+    // setProperties handles kdenlive:active_streams: updates the audio info and
+    // re-checks how many project audio tracks are needed.
+    QMap<QString, QString> props;
+    props.insert(QStringLiteral("kdenlive:active_streams"), streams);
+    bc->setProperties(props, true);
+    nlog(QStringLiteral("setClipActiveStreams: applied"));
+    return true;
 }
 
 QString KdenliveScript::clipIdsOnTrack(int videoTrackIndex)
@@ -211,6 +275,27 @@ bool KdenliveScript::setClipTransform(int clipId, int x, int y, int w, int h)
     }
     stack->setBuiltInTransform(x, y, w, h);
     nlog(QStringLiteral("setClipTransform: applied to clip %1").arg(clipId));
+    return true;
+}
+
+bool KdenliveScript::selectTimelineClip(int clipId)
+{
+    nlog(QStringLiteral("selectTimelineClip(clip=%1)").arg(clipId));
+    if (!pCore || !pCore->currentDoc()) {
+        return false;
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline || !timeline->isClip(clipId)) {
+        nlog(QStringLiteral("selectTimelineClip: invalid clip id %1").arg(clipId));
+        return false;
+    }
+    TimelineWidget *tl = pCore->window() ? pCore->window()->getCurrentTimeline() : nullptr;
+    if (!tl || !tl->controller()) {
+        nlog(QStringLiteral("selectTimelineClip: no timeline widget/controller"));
+        return false;
+    }
+    tl->controller()->selectItems({clipId});
+    nlog(QStringLiteral("selectTimelineClip: selected %1").arg(clipId));
     return true;
 }
 
@@ -328,6 +413,23 @@ bool KdenliveScript::save()
         return pCore->projectManager()->saveFile();
     }
     return false;
+}
+
+bool KdenliveScript::saveAs(const QString &path)
+{
+    nlog(QStringLiteral("saveAs('%1')").arg(path));
+    if (path.trimmed().isEmpty()) {
+        nlog(QStringLiteral("saveAs: empty path, ignored"));
+        return false;
+    }
+    if (!pCore || !pCore->projectManager() || !pCore->currentDoc()) {
+        return false;
+    }
+    // saveOverExistingFile=true, saveACopy=false -> titles the project at `path`
+    // (no dialog). Lets automation auto-save an untitled vertical short.
+    const bool ok = pCore->projectManager()->saveFileAs(path, true, false);
+    nlog(QStringLiteral("saveAs -> %1").arg(ok));
+    return ok;
 }
 
 void KdenliveScript::quit()

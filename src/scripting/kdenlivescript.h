@@ -30,16 +30,31 @@ public Q_SLOTS:
     Q_SCRIPTABLE void addEffect(const QString &effectId);
     /** @brief Insert a new video track at the top. Returns the new track id, or -1. */
     Q_SCRIPTABLE int addVideoTrack();
+    /** @brief Insert a new audio track. Returns the new track id, or -1. */
+    Q_SCRIPTABLE int addAudioTrack();
     /** @brief Number of video tracks in the active timeline. */
     Q_SCRIPTABLE int videoTrackCount();
+    /** @brief Number of audio tracks in the active timeline. */
+    Q_SCRIPTABLE int audioTrackCount();
     /** @brief Insert a bin clip (by source path) onto a video track (1-based from bottom)
      *  at a frame position. Returns the new timeline clip id, or -1 on failure. */
     Q_SCRIPTABLE int addClipToTrack(const QString &path, int videoTrackIndex, int position);
+    /** @brief Like addClipToTrack but with a drop mode: "" normal (A/V), "video" video-only,
+     *  "audio" audio-only. Video-only avoids inserting (and prompting for) audio tracks —
+     *  used for the upper reframe overlay so audio isn't duplicated. */
+    Q_SCRIPTABLE int addClipToTrackEx(const QString &path, int videoTrackIndex, int position, const QString &mode);
+    /** @brief Restrict a bin clip's active audio streams to a ';'-separated list of stream
+     *  indexes (e.g. "1;3" = keep streams 1 and 3, drop the rest). Set this before inserting
+     *  a multi-stream clip so only those streams need audio tracks (no "missing tracks" modal). */
+    Q_SCRIPTABLE bool setClipActiveStreams(const QString &path, const QString &streams);
     /** @brief Comma-separated clip ids on a video track (1-based from bottom). Always query this
      *  for LIVE clip ids — they are reassigned when a project is reloaded. */
     Q_SCRIPTABLE QString clipIdsOnTrack(int videoTrackIndex);
     /** @brief Set a timeline clip's transform rect (x, y, w, h in project pixels). */
     Q_SCRIPTABLE bool setClipTransform(int clipId, int x, int y, int w, int h);
+    /** @brief Make clipId the timeline selection (so selection-driven actions like
+     *  generate_karaoke_captions resolve it). Returns false on an invalid id. */
+    Q_SCRIPTABLE bool selectTimelineClip(int clipId);
     /** @brief Resize a timeline clip to durationFrames (extends/trims its right edge).
      *  Used to stretch a short banner still to a chosen on-screen duration. */
     Q_SCRIPTABLE bool resizeClip(int clipId, int durationFrames);
@@ -59,6 +74,9 @@ public Q_SLOTS:
     Q_SCRIPTABLE bool newProject(const QString &profilePath, const QString &savePath);
     /** @brief Save the current project. Returns true on success. */
     Q_SCRIPTABLE bool save();
+    /** @brief Save the current project to an explicit path (no dialog), titling an
+     *  untitled project. Used to auto-save a freshly-built vertical short. */
+    Q_SCRIPTABLE bool saveAs(const QString &path);
     /** @brief Cleanly shut down Kdenlive (prompt-free; removes the crash lock). Call save() first if needed. */
     Q_SCRIPTABLE void quit();
     /** @brief Trigger a Kdenlive menu/toolbar action by its action-collection name

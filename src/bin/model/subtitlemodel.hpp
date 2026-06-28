@@ -54,7 +54,10 @@ public:
         EffectRole,
         IsDialogueRole,
         SelectedRole,
-        GrabRole
+        GrabRole,
+        /** @brief true if the next subtitle (same layer) shares this one's line
+         *  group id (ASS Name) — i.e. they are chained into one displayed line. */
+        LinkedNextRole
     };
 
     /** @brief Function that parses through a subtitle file */
@@ -267,6 +270,17 @@ public:
     QString getEffects(int id) const;
     /** @brief Set the effect of a subtitle */
     void setEffects(int id, const QString &effects, bool refreshModel = true);
+    /** @brief Per-track caption Y: vertical centre (project px) for word-clip karaoke
+     *  render; -1 = use the style. Dialed directly from the subtitle track head. */
+    Q_INVOKABLE int captionY() const;
+    Q_INVOKABLE void setCaptionY(int y);
+    /** @brief Link word-clips into one displayed line: give every id the same line
+     *  group id (ASS Name) so the karaoke compile shows them together. */
+    Q_INVOKABLE void linkSubtitles(const QList<int> &ids);
+    /** @brief Unlink: give each id its own fresh line group id so they show separately. */
+    Q_INVOKABLE void unlinkSubtitles(const QList<int> &ids);
+    /** @brief Currently selected subtitle ids (for link/unlink actions). */
+    Q_INVOKABLE QList<int> selectedSubtitleIds() const;
     /** @brief Get the active subtitle layer */
     int activeSubLayer() const;
     /** @brief Set the active subtitle layer */
@@ -280,6 +294,14 @@ public:
     /** @brief Get default styles for subtitle layers */
     const QString getLayerDefaultStyle(int layer) const;
     int saveSubtitleData(const QJsonArray &data, const QString &outFile);
+    /** @brief Word-clip captions: if the model holds per-word events grouped by a
+     *  line id in the ASS Name field (``L0``/``L1`` … from NulCaption --word-clips),
+     *  compile each linked group into a karaoke pop line and write it to a separate
+     *  render .ass (so libass shows the whole line with the spoken word highlighted,
+     *  while the model/timeline keep one clip per word). Returns the path the
+     *  subtitle filter should render — the compiled file, or @p editFile unchanged
+     *  when there are no word groups. */
+    QString compileKaraoke(const QString &editFile);
 
 public Q_SLOTS:
     /** @brief Function that parses through a subtitle file */

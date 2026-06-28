@@ -150,6 +150,35 @@ Rectangle {
             }
         }
     }
+    Row {
+        // Per-track caption Y dial: sets the vertical centre (project px) of the
+        // word-clip karaoke captions live. -1 = auto (use the style position).
+        id: captionYRow
+        spacing: 4
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 3
+        anchors.left: parent.left
+        anchors.leftMargin: 2 * K.UiUtils.baseSizeMedium
+        visible: subtitleTrack.visible && subtitleTrack.height !== trackHeader.collapsedHeight
+        Label {
+            text: KI18n.i18n("Cap Y")
+            color: activePalette.text
+            font: K.UiUtils.smallestReadableFont
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        SpinBox {
+            id: capYSpin
+            from: -1
+            to: 4000
+            stepSize: 10
+            editable: true
+            value: subtitleModel ? subtitleModel.captionY() : -1
+            font: K.UiUtils.smallestReadableFont
+            onValueModified: if (subtitleModel) subtitleModel.setCaptionY(value)
+            ToolTip.visible: hovered
+            ToolTip.text: KI18n.i18n("Caption vertical position (px); -1 = automatic")
+        }
+    }
     Column {
         id: subtitleLayerIndicator
         width: root.trackTagWidth

@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!DOCTYPE kpartgui SYSTEM "kpartgui.dtd">
-<kpartgui name="kdenlive" version="254" translationDomain="kdenlive">
+<kpartgui name="kdenlive" version="255" translationDomain="kdenlive">
   <MenuBar>
     <Menu name="file">
       <Action name="file_new"/>
@@ -361,6 +361,7 @@
     <Action name="use_timeline_zone_in_edit"/>
     <Separator/>
     <Action name="playback_mode"/>
+    <Action name="delete_mode"/>
     <Separator/>
     <Action name="select_tool"/>
     <Action name="razor_tool"/>

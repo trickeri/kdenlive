@@ -365,8 +365,15 @@ private:
     bool m_selectAllTracks{false};
     /** @brief Compose a tool icon with a small "A"/"S" mode badge in the bottom-right corner. */
     QIcon toolIconWithBadge(const QString &baseTheme, bool allMode) const;
+    /** @brief Compose a base theme icon (enlarged to fill the cell) with a small corner badge. */
+    QIcon composeBadgedIcon(const QString &baseTheme, const QString &letter, const QColor &fill, const QColor &textColor) const;
     /** @brief Refresh the Razor/Select toolbar icons to match their current All/Single mode. */
     void updateToolModeIcons();
+    /** @brief When true, the Delete key ripple-deletes (extract) instead of leaving a gap. */
+    bool m_rippleDeleteMode{false};
+    QAction *m_buttonDeleteMode{nullptr};
+    /** @brief Refresh the delete-mode toolbar button icon/tooltip to match m_rippleDeleteMode. */
+    void updateDeleteModeButton();
     /** @brief Spacebar playback start mode for the timeline/project monitor. */
     enum class PlaybackMode { Continue, FromCursor, FromCue };
     PlaybackMode m_playbackMode{PlaybackMode::Continue};
@@ -433,6 +440,9 @@ public Q_SLOTS:
     void slotEditSubtitle(const QMap<QString, QString> &subProperties = {});
     /** @brief Generate word-by-word karaoke captions for the selected bin clip (NulCaption). */
     void slotGenerateKaraokeCaptions();
+    /** @brief Link / unlink the selected caption word-clips into / out of one displayed line. */
+    void slotLinkSubtitles();
+    void slotUnlinkSubtitles();
     /** @brief Open the standalone NulCaption settings window (nulcaption-settings). */
     void slotOpenCaptionSettings();
     /** @brief Restyle/reposition the existing subtitle track in place from the current
@@ -554,6 +564,8 @@ private Q_SLOTS:
     void slotCyclePlaybackMode();
     /** @brief Set the From-Cue play point to the current playhead and switch to From Cue mode. */
     void slotSetPlayCue();
+    /** @brief Toggle whether the Delete key does a normal delete (gap) or a ripple delete (extract). */
+    void slotToggleDeleteMode();
     void slotSelectAddTimelineClip();
     void slotSelectAddTimelineTransition();
     void slotAddEffect(QAction *result);
