@@ -321,6 +321,14 @@ public:
      */
     Q_INVOKABLE int suggestPlayheadSnapPoint(int pos, int snapDistance);
 
+    /** @brief Returns the closest snap point for the razor/cut tool (NULDRUMS fork).
+     *  Like suggestSnapPoint, but excludes snap points contributed by LOCKED tracks and
+     *  by the subtitle track, so the cut only locks onto clip edges on editable tracks
+     *  (plus guides and the playhead). A position shared with an editable clip edge stays
+     *  snappable.
+     */
+    Q_INVOKABLE int suggestSnapPointForCut(int pos, int snapDistance);
+
     /** @brief Return the previous track of same type as source trackId, or trackId if no track found */
     Q_INVOKABLE int getPreviousTrackId(int trackId);
     /** @brief Return the next track of same type as source trackId, or trackId if no track found */
@@ -351,6 +359,10 @@ public:
        @param clipId Id of the clip to test
     */
     const QString getClipBinId(int clipId) const;
+
+    /** @brief Returns the ids of all timeline clips that use the given bin (source) clip.
+       Used to map source-media captions onto every edited segment of that source. */
+    std::vector<int> getClipsByBinId(const QString &binId) const;
 
     /** @brief Returns the duration of a clip
        @param clipId Id of the clip to test

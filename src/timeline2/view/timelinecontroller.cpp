@@ -801,7 +801,33 @@ void TimelineController::deleteSelectedClips()
             extract(*sel.begin());
         }
     } else {
-        m_model->requestItemDeletion(*sel.begin());
+        // NULDRUMS "link subtitles to clips": a normal (gap) delete of clips also deletes the
+        // captions linked to them (matched by stored binId / positional overlap). Bundled into
+        // one undo with the clip deletion.
+        std::vector<int> linkedCaps;
+        if (pCore->subtitleLinkMode() && m_model->getSubtitleModel() && !m_model->getSubtitleModel()->isLocked()) {
+            auto subModel = m_model->getSubtitleModel();
+            for (int id : sel) {
+                if (m_model->isClip(id)) {
+                    int in = m_model->getClipPosition(id);
+                    int out = in + m_model->getClipPlaytime(id);
+                    for (int s : subModel->getLinkedSubtitles(m_model->getClipBinId(id), in, out)) {
+                        linkedCaps.push_back(s);
+                    }
+                }
+            }
+        }
+        if (linkedCaps.empty()) {
+            m_model->requestItemDeletion(*sel.begin());
+        } else {
+            Fun undo = []() { return true; };
+            Fun redo = []() { return true; };
+            m_model->requestItemDeletion(*sel.begin(), undo, redo, false);
+            for (int s : linkedCaps) {
+                m_model->requestSubtitleDeletion(s, undo, redo, true, true);
+            }
+            pCore->pushUndo(undo, redo, i18n("Delete selected items"));
+        }
     }
 }
 
@@ -3392,6 +3418,9 @@ void TimelineController::extract(int clipId, bool singleSelectionMode)
             std::unordered_set<int> sub = m_model->m_groups->getLeaves(targetRoot);
             qDebug() << "[ripple-delete] extract group" << targetRoot << "clips" << sub.size();
             m_model->requestClearSelection();
+            // Track the overall deleted zone so we can ripple the subtitle track to match.
+            int zoneStart = -1;
+            int zoneEnd = -1;
             // Create one command per clip
             for (int current_id : sub) {
                 if (m_model->isClip(current_id)) {
@@ -3412,8 +3441,51 @@ void TimelineController::extract(int clipId, bool singleSelectionMode)
                         // Clip has end mix, adjust out point
                         newOut -= cMixData.second.mixOffset;
                     }
+                    if (zoneStart < 0 || newIn < zoneStart) {
+                        zoneStart = newIn;
+                    }
+                    if (newOut > zoneEnd) {
+                        zoneEnd = newOut;
+                    }
                     qDebug() << "[ripple-delete] extract clip" << current_id << "track" << tk << "zone" << newIn << newOut;
                     TimelineFunctions::extractZoneWithUndo(m_model, {tk}, QPoint(newIn, newOut), false, clipToUngroup, clipsToRegroup, undo, redo);
+                }
+                // Subtitle leaves are handled by the subtitle-track ripple below (not per-leaf
+                // here) so we both delete the captions in the zone AND shift later ones left.
+            }
+            // NULDRUMS "link subtitles to clips": ripple the subtitle track to match the clip
+            // ripple — delete captions inside the deleted zone and shift later captions left by
+            // the zone width, so downstream captions stay aligned with their (shifted) audio.
+            if (pCore->subtitleLinkMode() && m_model->getSubtitleModel() && zoneStart >= 0 && zoneEnd > zoneStart) {
+                auto subModel = m_model->getSubtitleModel();
+                const double fps = pCore->getCurrentFps();
+                const int zoneDelta = zoneEnd - zoneStart;
+                std::vector<std::pair<int, int>> toShift; // (id, newStartFrame)
+                std::vector<int> toDelete;
+                for (const auto &e : subModel->getAllSubtitles()) {
+                    const int layer = e.first.first;
+                    const int st = e.first.second.frames(fps);
+                    const int en = e.second.endTime().frames(fps);
+                    const int id = subModel->getIdForStartPos(layer, e.first.second);
+                    if (st < zoneEnd && en > zoneStart) {
+                        toDelete.push_back(id);
+                    } else if (st >= zoneEnd) {
+                        toShift.emplace_back(id, st - zoneDelta);
+                    }
+                }
+                // first/last flag the single .ass reload (last==true on redo, first==true on
+                // undo). Setting them only on the very first/last op avoids reloading the
+                // subtitle file once per caption (which would hang on word-clip projects).
+                const int total = int(toDelete.size() + toShift.size());
+                int opIx = 0;
+                for (int id : toDelete) {
+                    m_model->requestSubtitleDeletion(id, undo, redo, opIx == 0, opIx == total - 1);
+                    ++opIx;
+                }
+                for (const auto &pr : toShift) {
+                    int layer = subModel->getLayerForId(pr.first);
+                    m_model->requestSubtitleMove(pr.first, layer, pr.second, true, opIx == 0, opIx == total - 1, true, undo, redo);
+                    ++opIx;
                 }
             }
         }
@@ -4151,18 +4223,23 @@ void TimelineController::resetTrackHeight()
 void TimelineController::selectAll()
 {
     std::unordered_set<int> ids;
+    // NULDRUMS fork: skip items on locked tracks — Select All should not grab clips/compositions
+    // the user has locked (e.g. banner tracks).
     for (const auto &clp : m_model->m_allClips) {
-        ids.insert(clp.first);
+        if (!m_model->trackIsLocked(m_model->getItemTrackId(clp.first))) {
+            ids.insert(clp.first);
+        }
     }
     for (const auto &clp : m_model->m_allCompositions) {
-        ids.insert(clp.first);
+        if (!m_model->trackIsLocked(m_model->getItemTrackId(clp.first))) {
+            ids.insert(clp.first);
+        }
     }
-    // Subtitles
-    std::unordered_set<int> subs = m_model->getAllSubIds();
-    ids.insert(subs.begin(), subs.end());
-    /*for (const auto &sub : m_model->m_allSubtitles) {
-        ids.insert(sub.first);
-    }*/
+    // Subtitles (skip when the subtitle track is locked).
+    if (!m_model->hasSubtitleModel() || !m_model->getSubtitleModel()->isLocked()) {
+        std::unordered_set<int> subs = m_model->getAllSubIds();
+        ids.insert(subs.begin(), subs.end());
+    }
     m_model->requestSetSelection(ids);
 }
 
@@ -6060,6 +6137,35 @@ void TimelineController::autofitTrackHeight(int timelineHeight, int collapsedHei
     QModelIndex modelStart = m_model->makeTrackIndexFromID(m_model->getTrackIndexFromPosition(0));
     QModelIndex modelEnd = m_model->makeTrackIndexFromID(m_model->getTrackIndexFromPosition(tracksCount - 1));
     Q_EMIT m_model->dataChanged(modelStart, modelEnd, {TimelineModel::HeightRole});
+}
+
+void TimelineController::selectSubtitleRange(int fromId, int toId)
+{
+    if (m_model == nullptr) {
+        return;
+    }
+    auto subModel = m_model->getSubtitleModel();
+    if (!subModel || !m_model->isSubTitle(toId)) {
+        return;
+    }
+    // No valid anchor -> behave like a plain select of the clicked one.
+    if (fromId < 0 || !m_model->isSubTitle(fromId)) {
+        m_model->requestAddToSelection(toId, true);
+        return;
+    }
+    const double fps = pCore->getCurrentFps();
+    const int layer = subModel->getLayerForId(toId);
+    int aF = subModel->getSubtitlePosition(fromId).frames(fps);
+    int bF = subModel->getSubtitlePosition(toId).frames(fps);
+    int lo = qMin(aF, bF);
+    int hi = qMax(aF, bF);
+    // +1 so the later subtitle (whose start == hi) is included by the overlap test.
+    std::unordered_set<int> ids = subModel->getItemsInRange(layer, lo, hi + 1);
+    ids.insert(fromId);
+    ids.insert(toId);
+    if (!ids.empty()) {
+        m_model->requestSetSelection(ids);
+    }
 }
 
 QVariantList TimelineController::subtitlesList() const

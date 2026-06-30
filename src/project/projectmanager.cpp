@@ -1457,6 +1457,10 @@ void ProjectManager::slotAddTextNote(const QString &text)
 
 void ProjectManager::prepareSave()
 {
+    // NULDRUMS fork: flush the timeline tool "modes" into doc properties before they are saved.
+    if (pCore->window()) {
+        pCore->window()->saveTimelineModes();
+    }
     pCore->projectItemModel()->saveDocumentProperties(pCore->currentDoc()->documentProperties(), m_project->metadata());
     pCore->bin()->saveFolderState();
     pCore->projectItemModel()->saveProperty(QStringLiteral("kdenlive:documentnotes"), documentNotes());

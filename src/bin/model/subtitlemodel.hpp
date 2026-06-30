@@ -57,7 +57,10 @@ public:
         GrabRole,
         /** @brief true if the next subtitle (same layer) shares this one's line
          *  group id (ASS Name) — i.e. they are chained into one displayed line. */
-        LinkedNextRole
+        LinkedNextRole,
+        /** @brief true if the previous subtitle (same layer) shares this one's line group id —
+         *  used with LinkedNextRole to find group start/end edges for the bookend brackets. */
+        LinkedPrevRole
     };
 
     /** @brief Function that parses through a subtitle file */
@@ -270,6 +273,13 @@ public:
     QString getEffects(int id) const;
     /** @brief Set the effect of a subtitle */
     void setEffects(int id, const QString &effects, bool refreshModel = true);
+    /** @brief NULDRUMS "link subtitles to clips": store the source clip binId on a caption
+     *  directly in its Effect field (`link:<binId>`), without an undo entry — used to tag
+     *  freshly generated captions. */
+    void setSourceClipLink(int id, const QString &binId);
+    /** @brief NULDRUMS: ids of captions linked to source clip @p binId whose [start,end)
+     *  overlaps the frame range [startFrame, endFrame). */
+    std::vector<int> getLinkedSubtitles(const QString &binId, int startFrame, int endFrame) const;
     /** @brief Per-track caption Y: vertical centre (project px) for word-clip karaoke
      *  render; -1 = use the style. Dialed directly from the subtitle track head. */
     Q_INVOKABLE int captionY() const;
@@ -279,6 +289,9 @@ public:
     Q_INVOKABLE void linkSubtitles(const QList<int> &ids);
     /** @brief Unlink: give each id its own fresh line group id so they show separately. */
     Q_INVOKABLE void unlinkSubtitles(const QList<int> &ids);
+    /** @brief Break only the link between @p subId and the next word-clip (alt-click a link pin):
+     *  moves everything after @p subId in its group to a new group. */
+    Q_INVOKABLE void breakLinkAfter(int subId);
     /** @brief Currently selected subtitle ids (for link/unlink actions). */
     Q_INVOKABLE QList<int> selectedSubtitleIds() const;
     /** @brief Get the active subtitle layer */

@@ -398,6 +398,18 @@ int TimelineModel::getClipIn(int clipId) const
     return clip->getIn();
 }
 
+std::vector<int> TimelineModel::getClipsByBinId(const QString &binId) const
+{
+    READ_LOCK();
+    std::vector<int> res;
+    for (const auto &c : m_allClips) {
+        if (c.second->binId() == binId) {
+            res.push_back(c.first);
+        }
+    }
+    return res;
+}
+
 QPoint TimelineModel::getClipInDuration(int clipId) const
 {
     READ_LOCK();
@@ -6062,6 +6074,60 @@ int TimelineModel::suggestSnapPoint(int pos, int snapDistance)
     int snapped = m_snaps->getClosestPoint(pos);
     m_snaps->removePoint(cursorPosition);
     return (qAbs(snapped - pos) < snapDistance ? snapped : pos);
+}
+
+int TimelineModel::suggestSnapPointForCut(int pos, int snapDistance)
+{
+    // NULDRUMS fork: razor/cut-tool snapping that ignores LOCKED tracks and the subtitle
+    // track, so the cut only locks onto guides, the playhead and clip edges on editable
+    // tracks. We temporarily remove those frames from the shared snap model, snap, then
+    // restore. NOTE: subtitle snap points get registered into m_snaps more than once
+    // (SubtitleModel registers starts twice + addSnapPoint), so we must remove ALL counts
+    // at each excluded frame (not a single ignore()/decrement, which left residue and kept
+    // the cut snapping to captions).
+    READ_LOCK();
+    const std::map<int, int> counts = m_snaps->_snaps();
+    std::unordered_set<int> excludeFrames;
+    // Clip edges (in/out) on locked tracks.
+    for (const auto &track : m_allTracks) {
+        if (!track->isLocked()) {
+            continue;
+        }
+        for (int cid : track->getClipsInRange(0)) {
+            int in = getClipPosition(cid);
+            excludeFrames.insert(in);
+            excludeFrames.insert(in + getClipPlaytime(cid));
+        }
+    }
+    // All subtitle edges (authoritative start+end list, matches what was registered).
+    if (m_subtitleModel) {
+        std::vector<int> subSnaps;
+        m_subtitleModel->allSnaps(subSnaps);
+        excludeFrames.insert(subSnaps.begin(), subSnaps.end());
+    }
+    // Fully remove the excluded frames (all counts), remembering counts to restore. A frame
+    // shared with an editable clip edge is also dropped here — acceptable, exact coincidence
+    // is rare and only costs one snap candidate.
+    std::vector<std::pair<int, int>> removed;
+    for (int f : excludeFrames) {
+        auto it = counts.find(f);
+        if (it != counts.end() && it->second > 0) {
+            for (int k = 0; k < it->second; ++k) {
+                m_snaps->removePoint(f);
+            }
+            removed.emplace_back(f, it->second);
+        }
+    }
+    int cursorPosition = pCore->getMonitorPosition();
+    m_snaps->addPoint(cursorPosition);
+    int snapped = m_snaps->getClosestPoint(pos);
+    m_snaps->removePoint(cursorPosition);
+    for (const auto &pr : removed) {
+        for (int k = 0; k < pr.second; ++k) {
+            m_snaps->addPoint(pr.first);
+        }
+    }
+    return (snapped >= 0 && qAbs(snapped - pos) < snapDistance ? snapped : pos);
 }
 
 int TimelineModel::suggestPlayheadSnapPoint(int pos, int snapDistance)

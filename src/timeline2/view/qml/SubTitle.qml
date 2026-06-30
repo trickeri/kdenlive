@@ -129,11 +129,8 @@ Item {
                 subtitleRoot.timeline.showKeyBinding()
             }
             onPressed: mouse => {
-                if (mouse.modifiers & Qt.ControlModifier && (K.Core.activeTool === K.ToolType.SelectTool || K.Core.activeTool === K.ToolType.RippleTool)) {
-                    mouse.accepted = false
-                    return
-                }
-                console.log('ENTERED ITEM CLICKED:', subtitleRoot.subtitle, ' ID: ', subtitleRoot.subId, 'START FRAME: ', subtitleRoot.startFrame)
+                var shiftSel = (mouse.modifiers & Qt.ShiftModifier)
+                var ctrlSel = (mouse.modifiers & Qt.ControlModifier)
                 root.blockAutoScroll = true
                 oldStartX = scrollView.contentX + mapToItem(scrollView, mouseX, 0).x
                 oldStartFrame = subtitleRoot.startFrame
@@ -147,13 +144,27 @@ Item {
                     root.subtitleItem = subtitleClipArea
                     incrementalOffset = 0
                 }
-                if (subtitleRoot.timeline.selection.indexOf(subtitleRoot.subId) === -1) {
-                    subtitleRoot.controller.requestAddToSelection(subtitleRoot.subId, !(mouse.modifiers & Qt.ShiftModifier))
-                    subtitleRoot.timeline.showAsset(subtitleRoot.subId);
-                } else if (mouse.modifiers & Qt.ShiftModifier) {
-                    console.log('REMOVE FROM SELECTION!!!!')
-                    subtitleRoot.controller.requestRemoveFromSelection(subtitleRoot.subId)
+                if (shiftSel) {
+                    // Shift = range select: every caption word between the anchor and this one.
+                    // NB: selectSubtitleRange lives on the TimelineController (`timeline`), not the
+                    // model (`controller`, which carries requestAddToSelection etc.).
+                    subtitleRoot.timeline.selectSubtitleRange(root.subtitleSelectAnchor, subtitleRoot.subId)
+                    subtitleRoot.timeline.showAsset(subtitleRoot.subId)
+                } else if (ctrlSel) {
+                    // Ctrl = toggle just this one in/out of the selection.
+                    if (subtitleRoot.timeline.selection.indexOf(subtitleRoot.subId) === -1) {
+                        subtitleRoot.controller.requestAddToSelection(subtitleRoot.subId, false)
+                    } else {
+                        subtitleRoot.controller.requestRemoveFromSelection(subtitleRoot.subId)
+                    }
+                    root.subtitleSelectAnchor = subtitleRoot.subId
+                    subtitleRoot.timeline.showAsset(subtitleRoot.subId)
                 } else {
+                    // Plain click = replace selection; this becomes the range anchor.
+                    if (subtitleRoot.timeline.selection.indexOf(subtitleRoot.subId) === -1) {
+                        subtitleRoot.controller.requestAddToSelection(subtitleRoot.subId, true)
+                    }
+                    root.subtitleSelectAnchor = subtitleRoot.subId
                     subtitleRoot.timeline.showAsset(subtitleRoot.subId)
                 }
                 subtitleRoot.timeline.activeTrack = -2
@@ -326,9 +337,10 @@ Item {
                 originalDuration = subtitleRoot.duration
                 newDuration = subtitleRoot.duration
                 shiftTrim = mouse.modifiers & Qt.ShiftModifier
-                if (!shiftTrim && (subtitleRoot.controller.isInGroup(subtitleRoot.subId) || subtitleRoot.controller.hasMultipleSelection())) {
-                    root.groupTrimData = subtitleRoot.controller.getGroupData(subtitleRoot.subId)
-                }
+                // NULDRUMS: never take the group-resize path for captions — resizing a subtitle
+                // that's in a (range-select) group deadlocks Kdenlive's processGroupResize and
+                // aborts. Single-word resize only; contiguity is handled separately.
+                root.groupTrimData = undefined
             }
             onPositionChanged: {
                 if (pressed) {
@@ -426,9 +438,9 @@ Item {
                 //rightend.anchors.right = undefined
                 oldMouseX = mouseX
                 shiftTrim = mouse.modifiers & Qt.ShiftModifier
-                if (!shiftTrim && (subtitleRoot.controller.isInGroup(subtitleRoot.subId) || subtitleRoot.controller.hasMultipleSelection())) {
-                    root.groupTrimData = subtitleRoot.controller.getGroupData(subtitleRoot.subId)
-                }
+                // NULDRUMS: single-word resize only (see left handle) — the group-resize path
+                // deadlocks/aborts for a multi-selected subtitle group.
+                root.groupTrimData = undefined
             }
             onPositionChanged: {
                 if (pressed) {
@@ -493,43 +505,6 @@ Item {
         }
     }
 
-    Item {
-        // Chain badge: this word-clip is linked with the next into one displayed
-        // line. Two interlocking capsule rings read as a chain link, straddling
-        // the gap between this clip and the next.
-        id: linkBadge
-        visible: subtitleRoot.linkedNext
-        property int rw: Math.round(K.UiUtils.baseSizeMedium * 1.05) // ring width
-        property int rh: Math.round(K.UiUtils.baseSizeMedium * 0.62) // ring height
-        width: rw * 1.5
-        height: rh + 4
-        z: 50
-        x: subtitleBase.x + subtitleBase.width - width / 2
-        y: (subtitleRoot.height - height) / 2
-        // dark backing so the rings read against any clip colour
-        Rectangle {
-            anchors.centerIn: parent
-            width: parent.width + 4
-            height: parent.height
-            radius: height / 2
-            color: "#06222a"
-            opacity: 0.65
-        }
-        Repeater {
-            model: 2
-            Rectangle {
-                required property int index
-                width: linkBadge.rw
-                height: linkBadge.rh
-                radius: height / 2
-                color: "transparent"
-                border.color: "#19e6ff"
-                border.width: Math.max(2, Math.round(linkBadge.rh * 0.26))
-                anchors.verticalCenter: parent.verticalCenter
-                // overlap the two rings ~50% so they interlock like a chain
-                x: index === 0 ? 0 : linkBadge.rw * 0.5
-                z: index
-            }
-        }
-    }
+    // Link chain icon is drawn by the subtitleLinkPins overlay in Timeline.qml (above all
+    // word-clips so it can straddle the boundary un-clipped and be alt-click-able to break).
 }

@@ -182,6 +182,11 @@ public:
     /** @brief True when the currently active tool (Razor/Select) is in "All tracks" mode. */
     bool toolAllTracks() const;
 
+    /** @brief Persist the timeline tool "modes" (delete ripple, playback, razor/select all-tracks)
+     *  into the current document's properties so they are saved with the project file. Called
+     *  from ProjectManager::prepareSave(). */
+    void saveTimelineModes();
+
     /** @brief Hide subtitle track and delete its temporary file*/
     void resetSubtitles(const QUuid &uuid);
 
@@ -190,6 +195,9 @@ public:
     void seekForPlaybackMode();
     /** @brief Current From-Cue play point in frames, or -1 if unset (QML-facing). */
     int playbackCue() const { return m_playbackCue; }
+    /** @brief True when "link subtitles to clips" mode is on (captions follow cuts/moves/
+     *  deletes of the audio clip they were derived from). QML-facing. */
+    bool subtitleLinkMode() const { return m_subtitleLinkMode; }
 
     /** @brief Show current tool key combination in status bar */
     void showToolMessage();
@@ -371,6 +379,9 @@ private:
     void updateToolModeIcons();
     /** @brief When true, the Delete key ripple-deletes (extract) instead of leaving a gap. */
     bool m_rippleDeleteMode{false};
+    /** @brief When true, captions follow cut/move/delete of the audio clip they were derived
+     *  from (matched by stored source binId + time overlap). Toggled from the subtitle track head. */
+    bool m_subtitleLinkMode{false};
     QAction *m_buttonDeleteMode{nullptr};
     /** @brief Refresh the delete-mode toolbar button icon/tooltip to match m_rippleDeleteMode. */
     void updateDeleteModeButton();
@@ -382,6 +393,9 @@ private:
     QAction *m_buttonPlaybackMode{nullptr};
     /** @brief Refresh the playback-mode toolbar button icon/tooltip to match m_playbackMode. */
     void updatePlaybackModeButton();
+    /** @brief Restore the timeline tool "modes" from the current document's properties (on open),
+     *  refreshing the toolbar buttons/badges. No-op for keys absent from the file. */
+    void restoreTimelineModes();
     /** @brief Store latest mouse position in timeline. */
     int m_mousePosition;
 
@@ -438,7 +452,7 @@ public Q_SLOTS:
     void slotInitSubtitle(const QMap<QString, QString> &subProperties, const QUuid &uuid);
     /** @brief Display the subtitle track and initialize subtitleModel if necessary. */
     void slotEditSubtitle(const QMap<QString, QString> &subProperties = {});
-    /** @brief Generate word-by-word karaoke captions for the selected bin clip (NulCaption). */
+    /** @brief Generate word-by-word karaoke captions for the selected clip(s) (NulCaption). */
     void slotGenerateKaraokeCaptions();
     /** @brief Link / unlink the selected caption word-clips into / out of one displayed line. */
     void slotLinkSubtitles();
@@ -566,6 +580,8 @@ private Q_SLOTS:
     void slotSetPlayCue();
     /** @brief Toggle whether the Delete key does a normal delete (gap) or a ripple delete (extract). */
     void slotToggleDeleteMode();
+    /** @brief Toggle "link subtitles to clips" mode (captions follow their source audio clip). */
+    void slotToggleSubtitleLink();
     void slotSelectAddTimelineClip();
     void slotSelectAddTimelineTransition();
     void slotAddEffect(QAction *result);

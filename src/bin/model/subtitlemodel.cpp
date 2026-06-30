@@ -410,6 +410,12 @@ void SubtitleModel::importSubtitle(const QString &filePath, int offset, bool ext
     };
     PUSH_LAMBDA(update_model, redo);
     update_model();
+    // LinkedNextRole of each word-clip depends on the NEXT clip, which didn't exist yet as
+    // rows were inserted during the bulk import — refresh it across all rows so the chain
+    // (link) icons render straight after generating captions, not only after a link/unlink.
+    if (rowCount() > 0) {
+        Q_EMIT dataChanged(index(0), index(rowCount() - 1), {LinkedNextRole, LinkedPrevRole, NameRole});
+    }
     if (externalImport) {
         pCore->pushUndo(undo, redo, i18n("Edit subtitle"));
     }
@@ -529,6 +535,7 @@ QHash<int, QByteArray> SubtitleModel::roleNames() const
     roles[GrabRole] = "grabbed";
     roles[SelectedRole] = "selected";
     roles[LinkedNextRole] = "linkedNext";
+    roles[LinkedPrevRole] = "linkedPrev";
     return roles;
 }
 
@@ -588,6 +595,20 @@ QVariant SubtitleModel::data(const QModelIndex &index, int role) const
             return false;
         }
         return getLayerForId(nextId) == subInfo.second.first && getName(nextId) == name;
+    }
+    case LinkedPrevRole: {
+        // Chained to the previous clip (same layer + same line group id). Used with
+        // LinkedNextRole to detect group start/end edges for the bookend brackets.
+        const QString name = m_subtitleList.at(subInfo.second).name();
+        static const QRegularExpression groupRe(QStringLiteral("^L\\d+$"));
+        if (!groupRe.match(name).hasMatch()) {
+            return false;
+        }
+        const int prevId = getPreviousSub(subInfo.first);
+        if (prevId < 0) {
+            return false;
+        }
+        return getLayerForId(prevId) == subInfo.second.first && getName(prevId) == name;
     }
     }
     return QVariant();
@@ -1292,7 +1313,7 @@ void SubtitleModel::linkSubtitles(const QList<int> &ids)
             setName(id, group, false);
         }
     }
-    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole});
+    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
     jsontoSubtitle(toJson()); // rewrite edit file + recompile karaoke render + reattach filter
     pCore->currentDoc()->setModified(true);
     pCore->refreshProjectMonitorOnce();
@@ -1319,7 +1340,47 @@ void SubtitleModel::unlinkSubtitles(const QList<int> &ids)
             ++k;
         }
     }
-    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole});
+    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
+    jsontoSubtitle(toJson());
+    pCore->currentDoc()->setModified(true);
+    pCore->refreshProjectMonitorOnce();
+}
+
+void SubtitleModel::breakLinkAfter(int subId)
+{
+    // Break the link between this word-clip and the NEXT one (alt-click a link pin): split the
+    // line group so everything AFTER subId moves to a fresh group, leaving subId's link to its
+    // successor severed while the rest of each side stays chained.
+    if (!hasSubtitle(subId)) {
+        return;
+    }
+    const QString group = getName(subId);
+    static const QRegularExpression groupRe(QStringLiteral("^L\\d+$"));
+    if (!groupRe.match(group).hasMatch()) {
+        return; // not part of a link group — nothing to break
+    }
+    int maxGroup = -1;
+    for (const auto &sub : m_subtitleList) {
+        maxGroup = qMax(maxGroup, parseGroupNum(sub.second.name()));
+    }
+    const QString newGroup = QStringLiteral("L%1").arg(maxGroup + 1);
+    const GenTime cut = getStartPosForId(subId);
+    std::vector<int> toRename;
+    for (const auto &sub : m_subtitleList) {
+        if (sub.second.name() == group && sub.first.second > cut) {
+            int sid = getIdForStartPos(sub.first.first, sub.first.second);
+            if (sid > -1) {
+                toRename.push_back(sid);
+            }
+        }
+    }
+    if (toRename.empty()) {
+        return; // subId is already the last in its group
+    }
+    for (int id : toRename) {
+        setName(id, newGroup, false);
+    }
+    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
     jsontoSubtitle(toJson());
     pCore->currentDoc()->setModified(true);
     pCore->refreshProjectMonitorOnce();
@@ -2581,6 +2642,40 @@ void SubtitleModel::setEffects(int id, const QString &effects, bool refreshModel
     };
     local_redo();
     pCore->pushUndo(local_undo, local_redo, i18n("Edit subtitle"));
+}
+
+void SubtitleModel::setSourceClipLink(int id, const QString &binId)
+{
+    if (binId.isEmpty() || m_allSubtitles.find(id) == m_allSubtitles.end()) {
+        return;
+    }
+    // Stored directly (no undo entry): this is metadata applied right after generation.
+    m_subtitleList.at(m_allSubtitles.at(id)).setEffect(QStringLiteral("link:%1").arg(binId));
+    int row = getSubtitleIndex(id);
+    Q_EMIT dataChanged(index(row), index(row), {EffectRole});
+}
+
+std::vector<int> SubtitleModel::getLinkedSubtitles(const QString &binId, int startFrame, int endFrame) const
+{
+    std::vector<int> res;
+    const QString tag = QStringLiteral("link:%1").arg(binId);
+    const double fps = pCore->getCurrentFps();
+    for (const auto &s : m_subtitleList) {
+        const QString eff = s.second.effect();
+        // Captions tagged with a source clip (link:<binId>) must match THIS clip's binId.
+        // Captions with no link tag (e.g. generated before this feature, or hand-made) fall
+        // back to positional overlap so they still follow the clip under them.
+        if (eff.startsWith(QLatin1String("link:")) && eff != tag) {
+            continue;
+        }
+        const int st = s.first.second.frames(fps);
+        const int en = s.second.endTime().frames(fps);
+        // Overlap test against the clip's timeline span.
+        if (st < endFrame && en > startFrame) {
+            res.push_back(getIdForStartPos(s.first.first, s.first.second));
+        }
+    }
+    return res;
 }
 
 int SubtitleModel::activeSubLayer() const

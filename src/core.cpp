@@ -952,6 +952,11 @@ int Core::playbackCue()
     return m_mainWindow->playbackCue();
 }
 
+bool Core::subtitleLinkMode()
+{
+    return m_mainWindow ? m_mainWindow->subtitleLinkMode() : false;
+}
+
 const QUuid Core::currentTimelineId() const
 {
     if (m_projectManager->getTimeline()) {

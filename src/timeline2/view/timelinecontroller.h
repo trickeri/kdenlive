@@ -207,6 +207,9 @@ public:
     Q_INVOKABLE void showTimelineToolInfo(bool show) const;
     /** @brief The model list for this timeline's subtitles */
     Q_INVOKABLE QVariantList subtitlesList() const;
+    /** @brief Select every subtitle between @p fromId (the anchor) and @p toId inclusive on
+     *  @p toId's layer — Shift-click range select for caption word-clips. */
+    Q_INVOKABLE void selectSubtitleRange(int fromId, int toId);
     int getMaxSubLayer() const;
     void setMaxSubLayer(int value);
     /** @brief Returns true if the avfilter.subtitles filter is not found */

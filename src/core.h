@@ -76,6 +76,7 @@ class /*KDENLIVECORE_EXPORT*/ Core : public QObject
     Q_PROPERTY(ToolType::ProjectTool activeTool READ activeTool NOTIFY activeToolChanged FINAL)
     Q_PROPERTY(bool toolAllTracks READ toolAllTracks NOTIFY activeToolChanged FINAL)
     Q_PROPERTY(int playbackCue READ playbackCue NOTIFY playbackCueChanged FINAL)
+    Q_PROPERTY(bool subtitleLinkMode READ subtitleLinkMode NOTIFY subtitleLinkModeChanged FINAL)
 
 public:
     friend class KdenliveDoc;
@@ -166,6 +167,8 @@ public:
     bool toolAllTracks();
     /** @brief Current From-Cue play point in frames, or -1 if unset (QML-facing). */
     int playbackCue();
+    /** @brief True when "link subtitles to clips" mode is on (QML-facing). */
+    bool subtitleLinkMode();
 
     /** @brief Returns a pointer to MLT's repository */
     std::unique_ptr<Mlt::Repository> &getMltRepository();
@@ -503,6 +506,8 @@ Q_SIGNALS:
     void activeToolChanged();
     /** @brief The From-Cue play point moved or was set/cleared */
     void playbackCueChanged();
+    /** @brief "Link subtitles to clips" mode toggled */
+    void subtitleLinkModeChanged();
     /** @brief Update the message about the current loading progress */
     void loadingMessageNewStage(const QString &message, int max = -1);
     /** @brief Increase the progress of the loading message by 1 */

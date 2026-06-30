@@ -38,6 +38,8 @@ Rectangle {
     property bool validMenu: false
     property bool subtitleMoving: false
     property var subtitleItem
+    // Anchor for Shift-click range selection of caption word-clips (-1 = none yet).
+    property int subtitleSelectAnchor: -1
     property color textColor: activePalette.text
     property var groupTrimData
     property bool trimInProgress: false
@@ -601,6 +603,11 @@ function getTrackColor(audio, header) {
     Keys.onPressed: event => {
         if (event.key == Qt.Key_F2) {
             Logic.getTrackHeaderById(root.timeline.activeTrack).editName()
+            event.accepted = true;
+        } else if (event.key == Qt.Key_Escape) {
+            // Clear the current selection (incl. caption word-clips) and the range anchor.
+            root.controller.requestClearSelection()
+            root.subtitleSelectAnchor = -1
             event.accepted = true;
         }
     }
@@ -1529,11 +1536,12 @@ function getTrackColor(audio, header) {
                         rubberSelect.height = 0
                 } else if (mouse.button & Qt.LeftButton) {
                     if (K.Core.activeTool === K.ToolType.RazorTool) {
-                        // razor tool — snap the cut to nearby clip edges/cuts on any track.
+                        // razor tool — snap the cut to nearby clip edges/cuts on editable tracks
+                        // (locked tracks and the subtitle track are ignored).
                         var y = mouse.y - ruler.height + scrollView.contentY - subtitleTrack.height
                         var cutFrame = (scrollView.contentX + mouse.x) / root.timeScale
                         if (root.razorSnapping > 0) {
-                            cutFrame = root.controller.suggestSnapPoint(Math.round(cutFrame), root.razorSnapping)
+                            cutFrame = root.controller.suggestSnapPointForCut(Math.round(cutFrame), root.razorSnapping)
                         }
                         if (K.Core.toolAllTracks) {
                             // "All" mode: cut every clip (audio + video) across every track.
@@ -1744,8 +1752,9 @@ function getTrackColor(audio, header) {
                 if (!pressed && !rubberSelect.visible && K.Core.activeTool === K.ToolType.RazorTool) {
                     var mouseXPos = root.getMouseFrame()
                     if (root.razorSnapping > 0) {
-                        // Snap the cut line to nearby clip edges/cuts so it visibly locks on.
-                        mouseXPos = root.controller.suggestSnapPoint(Math.round(mouseXPos), root.razorSnapping)
+                        // Snap the cut line to nearby clip edges/cuts (excluding locked
+                        // tracks and the subtitle track) so it visibly locks on.
+                        mouseXPos = root.controller.suggestSnapPointForCut(Math.round(mouseXPos), root.razorSnapping)
                     }
                     cutLine.x = mouseXPos * root.timeScale - scrollView.contentX
                     if (mouse.modifiers & Qt.ShiftModifier) {
@@ -2124,6 +2133,100 @@ function getTrackColor(audio, header) {
                             }
 
                             Repeater { id: subtitlesRepeater; model: subtitleDelegateModel }
+                            // Link "pins" (blueprint-style): drawn ABOVE the word-clips so each
+                            // chain icon straddles the boundary between two linked words without
+                            // being overdrawn, and is alt-clickable to break that single link.
+                            Repeater {
+                                id: subtitleLinkPins
+                                model: root.subtitleModel
+                                delegate: Item {
+                                    id: pinRoot
+                                    required property var model
+                                    visible: model.linkedNext
+                                    z: 60
+                                    property real rowH: subtitleTrack.height / (root.maxSubLayer + 1)
+                                    property int rw: Math.round(K.UiUtils.baseSizeMedium * 1.05)
+                                    property int rh: Math.round(K.UiUtils.baseSizeMedium * 0.62)
+                                    width: rw * 1.5
+                                    height: rh + 4
+                                    x: Math.round(pinRoot.model.endframe * root.timeScale) - width / 2
+                                    y: rowH * pinRoot.model.layer + (rowH - height) / 2
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: parent.width + 4
+                                        height: parent.height
+                                        radius: height / 2
+                                        color: "#06222a"
+                                        opacity: 0.8
+                                    }
+                                    Repeater {
+                                        model: 2
+                                        Rectangle {
+                                            required property int index
+                                            width: pinRoot.rw
+                                            height: pinRoot.rh
+                                            radius: height / 2
+                                            color: "transparent"
+                                            border.color: pinHover.containsMouse ? "#ff5a5a" : "#19e6ff"
+                                            border.width: Math.max(2, Math.round(pinRoot.rh * 0.26))
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: index === 0 ? 0 : pinRoot.rw * 0.5
+                                            z: index
+                                        }
+                                    }
+                                    MouseArea {
+                                        id: pinHover
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        acceptedButtons: Qt.LeftButton
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: mouse => {
+                                            if (mouse.modifiers & Qt.AltModifier) {
+                                                root.subtitleModel.breakLinkAfter(pinRoot.model.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Orange [ ] bookends at the outer edges of each linked group, so the
+                            // group span reads at a glance. Group start = links to next but not prev;
+                            // group end = links to prev but not next.
+                            Repeater {
+                                id: subtitleGroupBookends
+                                model: root.subtitleModel
+                                delegate: Item {
+                                    id: bkRoot
+                                    required property var model
+                                    property real rowH: subtitleTrack.height / (root.maxSubLayer + 1)
+                                    property bool grpStart: model.linkedNext && !model.linkedPrev
+                                    property bool grpEnd: model.linkedPrev && !model.linkedNext
+                                    visible: grpStart || grpEnd
+                                    z: 55
+                                    x: Math.round(bkRoot.model.startframe * root.timeScale)
+                                    y: rowH * bkRoot.model.layer
+                                    width: Math.max(1, Math.round((bkRoot.model.endframe - bkRoot.model.startframe) * root.timeScale))
+                                    height: rowH
+                                    readonly property int bw: 3
+                                    readonly property int nub: Math.round(K.UiUtils.baseSizeMedium * 1.15) // cap length
+                                    readonly property int ol: 1 // outline thickness
+                                    readonly property color orange: "#ff9500"
+                                    readonly property color outline: "#06222a"
+                                    // left bracket [ — dark outline rects first, then orange on top.
+                                    Rectangle { visible: bkRoot.grpStart; x: -bkRoot.ol; y: -bkRoot.ol; width: bkRoot.bw + 2 * bkRoot.ol; height: bkRoot.height + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpStart; x: -bkRoot.ol; y: -bkRoot.ol; width: bkRoot.nub + 2 * bkRoot.ol; height: bkRoot.bw + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpStart; x: -bkRoot.ol; y: bkRoot.height - bkRoot.bw - bkRoot.ol; width: bkRoot.nub + 2 * bkRoot.ol; height: bkRoot.bw + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpStart; x: 0; y: 0; width: bkRoot.bw; height: bkRoot.height; color: bkRoot.orange }
+                                    Rectangle { visible: bkRoot.grpStart; x: 0; y: 0; width: bkRoot.nub; height: bkRoot.bw; color: bkRoot.orange }
+                                    Rectangle { visible: bkRoot.grpStart; x: 0; y: bkRoot.height - bkRoot.bw; width: bkRoot.nub; height: bkRoot.bw; color: bkRoot.orange }
+                                    // right bracket ]
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.bw - bkRoot.ol; y: -bkRoot.ol; width: bkRoot.bw + 2 * bkRoot.ol; height: bkRoot.height + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.nub - bkRoot.ol; y: -bkRoot.ol; width: bkRoot.nub + 2 * bkRoot.ol; height: bkRoot.bw + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.nub - bkRoot.ol; y: bkRoot.height - bkRoot.bw - bkRoot.ol; width: bkRoot.nub + 2 * bkRoot.ol; height: bkRoot.bw + 2 * bkRoot.ol; color: bkRoot.outline }
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.bw; y: 0; width: bkRoot.bw; height: bkRoot.height; color: bkRoot.orange }
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.nub; y: 0; width: bkRoot.nub; height: bkRoot.bw; color: bkRoot.orange }
+                                    Rectangle { visible: bkRoot.grpEnd; x: bkRoot.width - bkRoot.nub; y: bkRoot.height - bkRoot.bw; width: bkRoot.nub; height: bkRoot.bw; color: bkRoot.orange }
+                                }
+                            }
                         }
                         Item {
                             id: tracksContainerArea

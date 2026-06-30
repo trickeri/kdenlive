@@ -1698,6 +1698,11 @@ void MainWindow::setupActions()
     connect(m_buttonDeleteMode, &QAction::triggered, this, &MainWindow::slotToggleDeleteMode);
     updateDeleteModeButton();
 
+    // "Link subtitles to clips" toggle (captions follow the audio clip they were derived
+    // from on cut/move/delete). Surfaced as a button in the subtitle track head.
+    addAction(QStringLiteral("toggle_subtitle_link"), i18n("Link Subtitles to Clips"), this, SLOT(slotToggleSubtitleLink()),
+              QIcon::fromTheme(QStringLiteral("link")), QKeySequence(), QStringLiteral("timeline"));
+
     addAction(QStringLiteral("automatic_transition"), m_buttonTimelineTags);
     addAction(QStringLiteral("show_video_thumbs"), m_buttonVideoThumbs);
     addAction(QStringLiteral("show_audio_thumbs"), m_buttonAudioThumbs);
@@ -2820,6 +2825,7 @@ void MainWindow::connectDocument()
     connect(project, &KdenliveDoc::reloadEffects, this, &MainWindow::slotReloadEffects);
     KdenliveSettings::setProject_fps(pCore->getCurrentFps());
     slotSwitchTimelineZone(project->getDocumentProperty(QStringLiteral("enableTimelineZone")).toInt() == 1);
+    restoreTimelineModes();
     slotUpdateProjectDuration(getCurrentTimeline()->model()->duration() - 1);
     const QUuid uuid = getCurrentTimeline()->getUuid();
     m_clipMonitor->updateDocumentUuid();
@@ -3120,7 +3126,16 @@ void MainWindow::slotDeleteItem()
         }
 
         // effect stack has no focus
-        if (m_rippleDeleteMode) {
+        bool rippleExtract = m_rippleDeleteMode;
+        if (rippleExtract) {
+            // Ripple-delete (extract) only operates on clips. A subtitle/composition-only
+            // selection has nothing to ripple, so extract() would bail with "No clip
+            // selected" and the Delete key would appear to do nothing. Fall back to a
+            // normal delete in that case so those items still get removed. (nuldrums fix.)
+            const auto sel = getCurrentTimeline()->model()->getCurrentSelection();
+            rippleExtract = std::any_of(sel.begin(), sel.end(), [this](int id) { return getCurrentTimeline()->model()->isClip(id); });
+        }
+        if (rippleExtract) {
             // Ripple-delete mode: extract (remove the selection and close the gap).
             getCurrentTimeline()->controller()->extract();
         } else {
@@ -3895,6 +3910,48 @@ void MainWindow::updateToolModeIcons()
     if (m_buttonRazorTool) {
         m_buttonRazorTool->setIcon(toolIconWithBadge(QStringLiteral("edit-cut"), m_razorAllTracks));
     }
+}
+
+void MainWindow::saveTimelineModes()
+{
+    // NULDRUMS fork: persist the four timeline tool "modes" per project file. Called from
+    // ProjectManager::prepareSave() before the document properties are flushed to disk.
+    KdenliveDoc *doc = pCore->currentDoc();
+    if (!doc) {
+        return;
+    }
+    doc->setDocumentProperty(QStringLiteral("nuldrums.rippledelete"), QString::number(m_rippleDeleteMode ? 1 : 0));
+    doc->setDocumentProperty(QStringLiteral("nuldrums.playbackmode"), QString::number(static_cast<int>(m_playbackMode)));
+    doc->setDocumentProperty(QStringLiteral("nuldrums.playbackcue"), QString::number(m_playbackCue));
+    doc->setDocumentProperty(QStringLiteral("nuldrums.razoralltracks"), QString::number(m_razorAllTracks ? 1 : 0));
+    doc->setDocumentProperty(QStringLiteral("nuldrums.selectalltracks"), QString::number(m_selectAllTracks ? 1 : 0));
+    doc->setDocumentProperty(QStringLiteral("nuldrums.subtitlelink"), QString::number(m_subtitleLinkMode ? 1 : 0));
+}
+
+void MainWindow::restoreTimelineModes()
+{
+    // NULDRUMS fork: restore the four timeline tool "modes" saved by saveTimelineModes().
+    // Called from connectDocument() once per opened document. Defaults match a fresh project.
+    KdenliveDoc *doc = pCore->currentDoc();
+    if (!doc) {
+        return;
+    }
+    m_rippleDeleteMode = doc->getDocumentProperty(QStringLiteral("nuldrums.rippledelete"), QStringLiteral("0")).toInt() != 0;
+    int mode = doc->getDocumentProperty(QStringLiteral("nuldrums.playbackmode"), QStringLiteral("0")).toInt();
+    if (mode < 0 || mode > static_cast<int>(PlaybackMode::FromCue)) {
+        mode = 0;
+    }
+    m_playbackMode = static_cast<PlaybackMode>(mode);
+    m_playbackCue = doc->getDocumentProperty(QStringLiteral("nuldrums.playbackcue"), QStringLiteral("-1")).toInt();
+    m_razorAllTracks = doc->getDocumentProperty(QStringLiteral("nuldrums.razoralltracks"), QStringLiteral("0")).toInt() != 0;
+    m_selectAllTracks = doc->getDocumentProperty(QStringLiteral("nuldrums.selectalltracks"), QStringLiteral("0")).toInt() != 0;
+    m_subtitleLinkMode = doc->getDocumentProperty(QStringLiteral("nuldrums.subtitlelink"), QStringLiteral("0")).toInt() != 0;
+    updateDeleteModeButton();
+    updatePlaybackModeButton();
+    updateToolModeIcons();
+    // Let QML (cut-all / select-all behaviour) pick up the restored all-tracks flags.
+    Q_EMIT pCore->activeToolChanged();
+    Q_EMIT pCore->subtitleLinkModeChanged();
 }
 
 void MainWindow::slotChangeEdit(QAction *action)
@@ -4851,6 +4908,13 @@ void MainWindow::slotToggleDeleteMode()
     pCore->displayMessage(m_buttonDeleteMode->text(), InformationMessage, 1500);
 }
 
+void MainWindow::slotToggleSubtitleLink()
+{
+    m_subtitleLinkMode = !m_subtitleLinkMode;
+    Q_EMIT pCore->subtitleLinkModeChanged();
+    pCore->displayMessage(m_subtitleLinkMode ? i18n("Subtitles linked to clips") : i18n("Subtitles unlinked from clips"), InformationMessage, 1500);
+}
+
 void MainWindow::seekForPlaybackMode()
 {
     if (m_playbackMode == PlaybackMode::Continue || !pCore->currentDoc()) {
@@ -5409,6 +5473,18 @@ void MainWindow::slotEditSubtitle(const QMap<QString, QString> &subProperties)
     }
 }
 
+// One kept segment's place in the extracted-audio WAV: concat window [cstart,cend) seconds maps
+// to timeline position posSec. (NULDRUMS: caption the literal cut audio, not the whole source.)
+struct CapWindow
+{
+    double cstart;
+    double cend;
+    double posSec;
+};
+static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const std::vector<int> &segClips,
+                                      const QString &outWav, std::vector<CapWindow> &windows);
+static int mapConcatCaptions(const QString &inAss, const QString &outAss, const std::vector<CapWindow> &windows);
+
 void MainWindow::slotGenerateKaraokeCaptions()
 {
     // NulCaption: word-by-word karaoke captions for the selected clip.
@@ -5418,12 +5494,27 @@ void MainWindow::slotGenerateKaraokeCaptions()
     // Works from both the timeline clip menu (selected timeline clip -> its bin clip)
     // and the Project Bin menu (selected bin clip).
     QString src;
+    QString srcBinId; // for the "link subtitles to clips" feature: tag captions with their source clip
+    // The selected timeline clip segments to caption (captions are remapped onto exactly these,
+    // so the user gets the one they selected — or all of them if several are selected).
+    std::vector<int> segClips;
     if (TimelineWidget *tl = getCurrentTimeline()) {
         int clipId = tl->controller()->getMainSelectedClip();
         if (clipId > -1) {
-            std::shared_ptr<ProjectClip> binClip = pCore->bin()->getBinClip(tl->model()->getClipBinId(clipId));
+            srcBinId = tl->model()->getClipBinId(clipId);
+            std::shared_ptr<ProjectClip> binClip = pCore->bin()->getBinClip(srcBinId);
             if (binClip) {
                 src = binClip->url();
+            }
+            // All selected timeline clips that share this source (segments to caption).
+            auto model = tl->model();
+            for (int id : model->getCurrentSelection()) {
+                if (model->isClip(id) && model->getClipBinId(id) == srcBinId) {
+                    segClips.push_back(id);
+                }
+            }
+            if (segClips.empty()) {
+                segClips.push_back(clipId);
             }
         }
     }
@@ -5431,12 +5522,27 @@ void MainWindow::slotGenerateKaraokeCaptions()
         std::shared_ptr<ProjectClip> clip = pCore->bin()->getFirstSelectedClip();
         if (clip) {
             src = clip->url();
+            srcBinId = clip->clipId();
         }
     }
     if (src.isEmpty()) {
         pCore->displayMessage(i18n("Select an audio or video clip first"), ErrorMessage);
         return;
     }
+
+    // Caption ONLY the selected clips' audio (the literal cut), not the whole source file: extract
+    // their source-audio regions into one WAV in timeline order. nulcaption transcribes that short
+    // WAV (accurate, no whole-file chunk drops); each caption is then placed at its clip's timeline
+    // position via the concat windows. If nothing is on the timeline (bin clip), caption the raw src.
+    std::vector<CapWindow> windows;
+    const QString keptWav = QDir::temp().absoluteFilePath(QStringLiteral("nulcaption-%1-kept.wav").arg(qHash(src)));
+    if (!segClips.empty()) {
+        if (!buildKeptAudioForCaptions(getCurrentTimeline()->model(), src, segClips, keptWav, windows) || windows.empty()) {
+            pCore->displayMessage(i18n("Could not extract clip audio for captioning"), ErrorMessage);
+            return;
+        }
+    }
+    const QString transcribeInput = windows.empty() ? src : keptWav;
     const QString assOut = QDir::temp().absoluteFilePath(QStringLiteral("nulcaption-%1.ass").arg(qHash(src)));
 
     // Ensure a subtitle track exists and is shown (reuses Kdenlive's own path).
@@ -5447,19 +5553,51 @@ void MainWindow::slotGenerateKaraokeCaptions()
     auto *job = new QProcess(this);
     job->setProcessChannelMode(QProcess::MergedChannels);
     connect(job, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished), this,
-            [this, job, assOut](int exitCode, QProcess::ExitStatus exitStatus) {
+            [this, job, assOut, srcBinId, windows, keptWav](int exitCode, QProcess::ExitStatus exitStatus) {
                 // OperationCompletedMessage clears the ProcessingJobMessage progress
                 // indicator (a plain InformationMessage does not — it leaves the spinner).
                 if (exitStatus == QProcess::NormalExit && exitCode == 0 && QFile::exists(assOut)) {
                     // Karaoke override tags + the style survive the importer
                     // (verified against SubtitleModel::importSubtitle / saveSubtitleData).
-                    getCurrentTimeline()->model()->getSubtitleModel()->importSubtitle(assOut, 0, true);
+                    auto subModel = getCurrentTimeline()->model()->getSubtitleModel();
+                    // The kept-audio captions are in concat time; place each at its clip's timeline
+                    // position. (Bin-clip case has no windows -> import the raw file as-is.)
+                    QString toImport = assOut;
+                    if (!windows.empty()) {
+                        const QString remapped = assOut + QStringLiteral(".tl.ass");
+                        int n = mapConcatCaptions(assOut, remapped, windows);
+                        if (n > 0) {
+                            toImport = remapped;
+                        } else {
+                            pCore->displayMessage(i18n("No speech found in the selected clip(s)"), OperationCompletedMessage);
+                            QFile::remove(remapped);
+                            QFile::remove(assOut);
+                            job->deleteLater();
+                            return;
+                        }
+                    }
+                    // Snapshot existing ids so we can tag only the newly imported captions with
+                    // their source clip binId (the "link subtitles to clips" link, stored in the
+                    // ASS Effect field so it survives save/load).
+                    std::unordered_set<int> before = subModel->getAllSubIds();
+                    subModel->importSubtitle(toImport, 0, true);
+                    if (toImport != assOut) {
+                        QFile::remove(toImport);
+                    }
+                    if (!srcBinId.isEmpty()) {
+                        for (int id : subModel->getAllSubIds()) {
+                            if (before.find(id) == before.end()) {
+                                subModel->setSourceClipLink(id, srcBinId);
+                            }
+                        }
+                    }
                     pCore->displayMessage(i18n("Karaoke captions added to subtitle track"), OperationCompletedMessage);
                 } else {
                     pCore->displayMessage(QString(), OperationCompletedMessage); // dismiss the progress spinner
                     pCore->displayMessage(i18n("Caption generation failed: %1", QString::fromUtf8(job->readAll())), ErrorMessage);
                 }
                 QFile::remove(assOut);
+                QFile::remove(keptWav);
                 job->deleteLater();
             });
     // media -> per-word timings (whisper.cpp Vulkan, large-v3-turbo) -> Kdenlive-native karaoke ASS.
@@ -5467,13 +5605,170 @@ void MainWindow::slotGenerateKaraokeCaptions()
     // window (Subtitles -> Caption Settings…), which the CLI reads as defaults — so we
     // pass no --preset/--style here, letting those settings take effect.
     job->start(QStringLiteral("nulcaption"),
-               {QStringLiteral("caption"), src, QStringLiteral("--native"), QStringLiteral("--word-clips"), QStringLiteral("--ass"), assOut});
+               {QStringLiteral("caption"), transcribeInput, QStringLiteral("--native"), QStringLiteral("--word-clips"), QStringLiteral("--ass"), assOut});
     if (!job->waitForStarted(3000)) {
         pCore->displayMessage(i18n("Could not start 'nulcaption' — is it installed and on PATH? (run nulcaption-setup once)"), ErrorMessage);
         job->deleteLater();
         return;
     }
     pCore->displayMessage(i18n("Generating karaoke captions…"), ProcessingJobMessage);
+}
+
+// ASS timecode (H:MM:SS.cc, centiseconds) <-> real seconds. Working in seconds keeps the remap
+// correct even when the source clip fps differs from the project fps (e.g. 60fps source on a
+// 30fps timeline) — frame-based math mixed the two spaces and dropped every caption.
+static double assTimecodeToSeconds(const QString &tc)
+{
+    const QStringList hms = tc.split(QLatin1Char(':'));
+    if (hms.size() != 3) {
+        return -1;
+    }
+    bool ok1, ok2, ok3;
+    int h = hms.at(0).toInt(&ok1);
+    int m = hms.at(1).toInt(&ok2);
+    double s = hms.at(2).toDouble(&ok3);
+    if (!ok1 || !ok2 || !ok3) {
+        return -1;
+    }
+    return h * 3600 + m * 60 + s;
+}
+
+static QString secondsToAssTimecode(double total)
+{
+    if (total < 0) {
+        total = 0;
+    }
+    int h = int(total) / 3600;
+    int m = (int(total) % 3600) / 60;
+    double s = total - (h * 3600 + m * 60);
+    return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 5, 'f', 2, QLatin1Char('0'));
+}
+
+// Extract ONLY the selected clips' source audio (the literal cut) into one WAV, in timeline order,
+// so nulcaption transcribes exactly what plays — short and accurate, no whole-file chunk drops.
+// Fills @p windows mapping concat-time -> timeline-time. Returns true on success.
+static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const std::vector<int> &segClips,
+                                      const QString &outWav, std::vector<CapWindow> &windows)
+{
+    const double fps = pCore->getCurrentFps();
+    // Unique segments by (in,pos): the V1/V2/audio clips of one cut share in/pos/dur.
+    struct Seg
+    {
+        double inSec;
+        double durSec;
+        double posSec;
+    };
+    std::vector<Seg> segs;
+    for (int cid : segClips) {
+        if (!model->isClip(cid)) {
+            continue;
+        }
+        Seg s{model->getClipIn(cid) / fps, model->getClipPlaytime(cid) / fps, model->getClipPosition(cid) / fps};
+        bool dup = false;
+        for (const Seg &e : segs) {
+            if (qAbs(e.posSec - s.posSec) < 0.001 && qAbs(e.inSec - s.inSec) < 0.001) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            segs.push_back(s);
+        }
+    }
+    if (segs.empty()) {
+        return false;
+    }
+    std::sort(segs.begin(), segs.end(), [](const Seg &a, const Seg &b) { return a.posSec < b.posSec; });
+
+    QDir tmp = QDir::temp();
+    QStringList parts;
+    QString listText;
+    double concat = 0;
+    for (int i = 0; i < int(segs.size()); ++i) {
+        const QString part = tmp.absoluteFilePath(QStringLiteral("nulcap-part-%1-%2.wav").arg(qHash(src)).arg(i));
+        QProcess ff;
+        // -ss before -i + re-encode to 16k mono PCM = sample-accurate audio extract of the cut.
+        ff.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-ss"), QString::number(segs[i].inSec, 'f', 3), QStringLiteral("-i"), src,
+                                            QStringLiteral("-t"), QString::number(segs[i].durSec, 'f', 3), QStringLiteral("-vn"), QStringLiteral("-ac"),
+                                            QStringLiteral("1"), QStringLiteral("-ar"), QStringLiteral("16000"), part});
+        ff.waitForFinished(120000);
+        if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0 || !QFile::exists(part)) {
+            for (const QString &p : parts) {
+                QFile::remove(p);
+            }
+            return false;
+        }
+        parts << part;
+        listText += QStringLiteral("file '%1'\n").arg(part);
+        windows.push_back({concat, concat + segs[i].durSec, segs[i].posSec});
+        concat += segs[i].durSec;
+    }
+    const QString listPath = tmp.absoluteFilePath(QStringLiteral("nulcap-list-%1.txt").arg(qHash(src)));
+    QFile lf(listPath);
+    if (lf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        lf.write(listText.toUtf8());
+        lf.close();
+    }
+    QProcess cat;
+    cat.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("concat"), QStringLiteral("-safe"), QStringLiteral("0"),
+                                         QStringLiteral("-i"), listPath, QStringLiteral("-c"), QStringLiteral("copy"), outWav});
+    cat.waitForFinished(120000);
+    for (const QString &p : parts) {
+        QFile::remove(p);
+    }
+    QFile::remove(listPath);
+    return cat.exitStatus() == QProcess::NormalExit && cat.exitCode() == 0 && QFile::exists(outWav);
+}
+
+// Map captions from extracted-concat time to timeline time using the concat windows. Returns the
+// number of events written.
+static int mapConcatCaptions(const QString &inAss, const QString &outAss, const std::vector<CapWindow> &windows)
+{
+    QFile in(inAss);
+    QFile out(outAss);
+    if (!in.open(QIODevice::ReadOnly | QIODevice::Text) || !out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return -1;
+    }
+    QTextStream rs(&in);
+    QTextStream ws(&out);
+    int written = 0;
+    while (!rs.atEnd()) {
+        const QString line = rs.readLine();
+        if (!line.startsWith(QLatin1String("Dialogue:"))) {
+            ws << line << '\n';
+            continue;
+        }
+        const QString rest = line.mid(9); // length of "Dialogue:"
+        QStringList f = rest.split(QLatin1Char(','));
+        if (f.size() < 10) {
+            ws << line << '\n';
+            continue;
+        }
+        double evStart = assTimecodeToSeconds(f.at(1).trimmed());
+        double evEnd = assTimecodeToSeconds(f.at(2).trimmed());
+        if (evStart < 0 || evEnd < 0) {
+            continue;
+        }
+        bool matched = false;
+        double newStart = 0, newEnd = 0;
+        for (const CapWindow &w : windows) {
+            if (evStart >= w.cstart && evStart < w.cend) {
+                newStart = w.posSec + (evStart - w.cstart);
+                newEnd = w.posSec + (evEnd - w.cstart);
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            continue;
+        }
+        ws << "Dialogue:" << f.at(0) << ',' << secondsToAssTimecode(newStart) << ',' << secondsToAssTimecode(newEnd) << ','
+           << QStringList(f.mid(3)).join(QLatin1Char(',')) << '\n';
+        ++written;
+    }
+    in.close();
+    out.close();
+    return written;
 }
 
 // Selected subtitle ids from the authoritative timeline selection (m_currentSelection

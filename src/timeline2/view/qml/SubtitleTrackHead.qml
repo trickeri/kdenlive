@@ -103,6 +103,22 @@ Rectangle {
             }
         }
         ToolButton {
+            id: linkButton
+            focusPolicy: Qt.NoFocus
+            // Lit (link) when on, broken (remove-link) when off.
+            icon.name: K.Core.subtitleLinkMode ? "link" : "remove-link"
+            width: trackHeader.collapsedHeight
+            height: trackHeader.collapsedHeight
+            checkable: true
+            checked: K.Core.subtitleLinkMode
+            onClicked: K.Core.triggerAction('toggle_subtitle_link')
+            ToolTip.visible: hovered
+            ToolTip.delay: 1500
+            ToolTip.timeout: 5000
+            ToolTip.text: K.Core.subtitleLinkMode ? KI18n.i18n("Captions linked to their source clips (cut/move/delete follow the audio). Click to unlink.")
+                                                   : KI18n.i18n("Link captions to their source clips so cut/move/delete follow the audio. Click to link.")
+        }
+        ToolButton {
             id: analyseButton
             focusPolicy: Qt.NoFocus
             icon.name: "text-speak"
