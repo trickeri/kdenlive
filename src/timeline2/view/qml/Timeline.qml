@@ -2304,6 +2304,17 @@ function getTrackColor(audio, header) {
                                     enabled: K.Core.activeTool === K.ToolType.SelectTool || K.Core.activeTool === K.ToolType.RippleTool
                                     onPressed: mouse => {
                                         if (mouse.modifiers & Qt.ControlModifier || (mouse.modifiers & Qt.ShiftModifier && !(mouse.modifiers & Qt.AltModifier))) {
+                                            // NULDRUMS: in select-all-tracks mode, a Shift+click on a clip should EXTEND the
+                                            // selection by the whole vertical COLUMN under the click (consistent with
+                                            // select-all), not just add the single clip the shift-rubber-band point adds.
+                                            // Handle it here and consume the press so no rubber-band/drag starts.
+                                            if (K.Core.toolAllTracks && (mouse.modifiers & Qt.ShiftModifier) && !(mouse.modifiers & Qt.ControlModifier) && !(mouse.modifiers & Qt.AltModifier) && root.timeline.exists(dragProxy.draggedItem)) {
+                                                var columnFrame = Math.round((parent.x + mouse.x) / root.timeScale)
+                                                root.timeline.selectAllClipsAtPosition(columnFrame, /*add=*/ true)
+                                                root.timeline.showAsset(dragProxy.draggedItem)
+                                                mouse.accepted = true
+                                                return
+                                            }
                                             mouse.accepted = false
                                             return
                                         }
