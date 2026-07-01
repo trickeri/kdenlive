@@ -129,6 +129,16 @@ Item {
                 subtitleRoot.timeline.showKeyBinding()
             }
             onPressed: mouse => {
+                if (root.subtitlesLocked) {
+                    // Captions are locked (rendered pink). Selecting/moving is disabled at the
+                    // model level, so a plain click would silently do nothing. Instead flash the
+                    // track-head lock and tell the user how to unlock, so a locked track is never
+                    // a mysterious "can't select anything" mode.
+                    root.animateLockButton(-2)
+                    subtitleRoot.timeline.showKeyBinding(KI18n.i18n("<b>Subtitle track is locked</b> — click the lock icon in the track head (or press Shift+L) to unlock"))
+                    mouse.accepted = true
+                    return
+                }
                 var shiftSel = (mouse.modifiers & Qt.ShiftModifier)
                 var ctrlSel = (mouse.modifiers & Qt.ControlModifier)
                 root.blockAutoScroll = true
@@ -160,10 +170,11 @@ Item {
                     root.subtitleSelectAnchor = subtitleRoot.subId
                     subtitleRoot.timeline.showAsset(subtitleRoot.subId)
                 } else {
-                    // Plain click = replace selection; this becomes the range anchor.
-                    if (subtitleRoot.timeline.selection.indexOf(subtitleRoot.subId) === -1) {
-                        subtitleRoot.controller.requestAddToSelection(subtitleRoot.subId, true)
-                    }
+                    // Plain click = select ONLY this word, collapsing any multi-word/group
+                    // selection (like every other editing tool). Always reset, even when this
+                    // word is already part of the current selection, so clicking one member of
+                    // a linked group drops the rest. This also becomes the range anchor.
+                    subtitleRoot.controller.requestAddToSelection(subtitleRoot.subId, true)
                     root.subtitleSelectAnchor = subtitleRoot.subId
                     subtitleRoot.timeline.showAsset(subtitleRoot.subId)
                 }

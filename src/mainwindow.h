@@ -147,6 +147,10 @@ public:
     /** @brief Returns a pointer to the timeline with @uuid */
     TimelineWidget *getTimeline(const QUuid uuid) const;
     void getSequenceProperties(const QUuid &uuid, QMap<QString, QString> &props);
+    /** @brief Nuldrums: persist each open timeline's zoom + horizontal scroll to a state-config
+     * sidecar so the view is restored on reopen even when the project was only navigated (not
+     * edited/saved). Called before teardown on project/app close. */
+    void persistTimelineViews();
     void closeTimelineTab(const QUuid uuid, bool onDeletion, bool checkActiveClosed=false);
     /** @brief Returns a list of opened tabs uuids */
     const QStringList openedSequences() const;

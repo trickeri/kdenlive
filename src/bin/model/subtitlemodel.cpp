@@ -23,6 +23,8 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStringConverter>
+#include <algorithm>
+#include <set>
 #include <utility>
 
 SubtitleModel::SubtitleModel(std::shared_ptr<TimelineItemModel> timeline, const std::weak_ptr<SnapInterface> &snapModel, QObject *parent)
@@ -1284,16 +1286,16 @@ static int parseGroupNum(const QString &name)
 
 void SubtitleModel::linkSubtitles(const QList<int> &ids)
 {
-    if (ids.size() < 2) {
+    if (ids.size() < 2 || isLocked()) {
         return;
     }
-    // Target group = the earliest selected clip's group (keep its line id), or a new one.
+    // Expand the selection into ONE contiguous line. Starting from the selected words we pull in
+    // (a) every word BETWEEN the earliest and latest selected word ("link everything in between"),
+    // and (b) the full membership of any existing line a member belongs to (so extending a line
+    // keeps its other words). We iterate to a fixpoint: absorbing a line can push the span outward,
+    // which then pulls in more in-between words, until nothing new is added.
     int earliest = -1;
     GenTime earliestPos;
-    int maxGroup = -1;
-    for (const auto &sub : m_subtitleList) {
-        maxGroup = qMax(maxGroup, parseGroupNum(sub.second.name()));
-    }
     for (int id : ids) {
         if (!hasSubtitle(id)) {
             continue;
@@ -1307,16 +1309,129 @@ void SubtitleModel::linkSubtitles(const QList<int> &ids)
     if (earliest == -1) {
         return;
     }
-    const QString group = parseGroupNum(getName(earliest)) >= 0 ? getName(earliest) : QStringLiteral("L%1").arg(maxGroup + 1);
+    const int layer = getLayerForId(earliest); // captions live on one row; chain within it
+    std::set<int> memberSet;
     for (int id : ids) {
-        if (hasSubtitle(id)) {
-            setName(id, group, false);
+        if (hasSubtitle(id) && getLayerForId(id) == layer) {
+            memberSet.insert(id);
         }
     }
-    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
-    jsontoSubtitle(toJson()); // rewrite edit file + recompile karaoke render + reattach filter
-    pCore->currentDoc()->setModified(true);
-    pCore->refreshProjectMonitorOnce();
+    if (memberSet.size() < 2) {
+        return;
+    }
+    int maxGroup = -1;
+    for (const auto &sub : m_subtitleList) {
+        maxGroup = qMax(maxGroup, parseGroupNum(sub.second.name()));
+    }
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        GenTime lo, hi;
+        bool first = true;
+        std::set<QString> touched;
+        for (int id : memberSet) {
+            const GenTime p = getStartPosForId(id);
+            if (first) {
+                lo = hi = p;
+                first = false;
+            } else {
+                lo = qMin(lo, p);
+                hi = qMax(hi, p);
+            }
+            const QString n = getName(id);
+            if (parseGroupNum(n) >= 0) {
+                touched.insert(n);
+            }
+        }
+        for (const auto &sub : m_subtitleList) {
+            if (sub.first.first != layer) {
+                continue;
+            }
+            const int sid = getIdForStartPos(sub.first.first, sub.first.second);
+            if (sid < 0 || memberSet.count(sid)) {
+                continue;
+            }
+            const bool inSpan = sub.first.second >= lo && sub.first.second <= hi; // a word between the ends
+            const bool inChain = touched.count(sub.second.name());                // a mate of an absorbed line
+            if (inSpan || inChain) {
+                memberSet.insert(sid);
+                changed = true;
+            }
+        }
+    }
+    // memberSet is now every word on this row from the first to the last — one contiguous line.
+    std::vector<int> run(memberSet.begin(), memberSet.end());
+    std::sort(run.begin(), run.end(), [this](int a, int b) { return getStartPosForId(a) < getStartPosForId(b); });
+
+    // Build the target state for every word we change: the line id it joins, plus (for gap-fill)
+    // any resized start/end so consecutive words in a line meet in the middle of the silence
+    // between them and the rendered karaoke line never flickers out.
+    const double fps = pCore->getCurrentFps();
+    struct SubState
+    {
+        QString name;
+        GenTime start;
+        GenTime end;
+        int layer;
+    };
+    std::map<int, SubState> oldStates, newStates;
+    for (int id : run) {
+        const auto key = m_allSubtitles.at(id);
+        const SubState s{m_subtitleList.at(key).name(), key.second, m_subtitleList.at(key).endTime(), key.first};
+        oldStates[id] = s;
+        newStates[id] = s;
+    }
+    // Target line id = the earliest word's existing line (keeps a real id / prepends), or a new L.
+    const QString group = parseGroupNum(getName(run.front())) >= 0 ? getName(run.front()) : QStringLiteral("L%1").arg(maxGroup + 1);
+    for (int id : run) {
+        newStates[id].name = group;
+    }
+    // Fill empty silence between consecutive words: extend each word's end and the next word's
+    // start to the midpoint so the rendered karaoke line never flickers out mid-line.
+    for (size_t i = 0; i + 1 < run.size(); ++i) {
+        const int aEnd = newStates[run[i]].end.frames(fps);
+        const int bStart = newStates[run[i + 1]].start.frames(fps);
+        if (aEnd < bStart) {
+            const int mid = aEnd + (bStart - aEnd) / 2;
+            newStates[run[i]].end = GenTime(mid, fps);
+            newStates[run[i + 1]].start = GenTime(mid, fps);
+        }
+    }
+    if (newStates.empty()) {
+        return;
+    }
+
+    // Apply as ONE atomic undo: reassign line ids and rekey any resized words, recompiling the
+    // karaoke render on both directions so a single Ctrl+Z restores grouping AND timing.
+    auto applyStates = [this](const std::map<int, SubState> &states) {
+        for (const auto &kv : states) {
+            const int id = kv.first;
+            if (m_allSubtitles.count(id) == 0) {
+                continue;
+            }
+            const auto oldKey = m_allSubtitles.at(id);
+            SubtitleEvent ev = m_subtitleList.at(oldKey);
+            removeSnapPoint(oldKey.second);
+            removeSnapPoint(ev.endTime());
+            ev.setName(kv.second.name);
+            ev.setEndTime(kv.second.end);
+            const std::pair<int, GenTime> newKey = {kv.second.layer, kv.second.start};
+            m_subtitleList.erase(oldKey);
+            m_subtitleList[newKey] = ev;
+            m_allSubtitles[id] = newKey;
+            addSnapPoint(kv.second.start);
+            addSnapPoint(kv.second.end);
+        }
+        Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole, StartFrameRole, EndFrameRole});
+        jsontoSubtitle(toJson()); // rewrite edit file + recompile karaoke render + reattach filter
+        pCore->refreshProjectMonitorOnce();
+        return true;
+    };
+    Fun local_redo = [applyStates, newStates]() { return applyStates(newStates); };
+    Fun local_undo = [applyStates, oldStates]() { return applyStates(oldStates); };
+    local_redo();
+    pCore->pushUndo(local_undo, local_redo, i18n("Link subtitles"));
+    qDebug() << "[link-subtitles] linked" << int(newStates.size()) << "word(s) into group" << group;
 }
 
 QList<int> SubtitleModel::selectedSubtitleIds() const
@@ -1326,7 +1441,7 @@ QList<int> SubtitleModel::selectedSubtitleIds() const
 
 void SubtitleModel::unlinkSubtitles(const QList<int> &ids)
 {
-    if (ids.isEmpty()) {
+    if (ids.isEmpty() || isLocked()) {
         return;
     }
     int maxGroup = -1;
@@ -1351,7 +1466,7 @@ void SubtitleModel::breakLinkAfter(int subId)
     // Break the link between this word-clip and the NEXT one (alt-click a link pin): split the
     // line group so everything AFTER subId moves to a fresh group, leaving subId's link to its
     // successor severed while the rest of each side stays chained.
-    if (!hasSubtitle(subId)) {
+    if (!hasSubtitle(subId) || isLocked()) {
         return;
     }
     const QString group = getName(subId);
@@ -1377,13 +1492,28 @@ void SubtitleModel::breakLinkAfter(int subId)
     if (toRename.empty()) {
         return; // subId is already the last in its group
     }
-    for (int id : toRename) {
-        setName(id, newGroup, false);
-    }
-    Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
-    jsontoSubtitle(toJson());
-    pCore->currentDoc()->setModified(true);
-    pCore->refreshProjectMonitorOnce();
+    // Apply the group reassignment as a SINGLE undoable command. The old code renamed
+    // each word via setName(..., refreshModel=false), which pushed one fragmented undo
+    // entry PER word AND undid with refreshModel=false (no karaoke recompile) — so a
+    // single Ctrl+Z reverted at most one word and never refreshed the render, making the
+    // break look like it wasn't in the undo history at all. One command, recompiling on
+    // both directions, makes alt-click break a proper atomic undo step.
+    auto applyGroups = [this](const std::vector<int> &ids, const QString &grp) {
+        for (int id : ids) {
+            if (m_allSubtitles.count(id)) {
+                m_subtitleList.at(m_allSubtitles.at(id)).setName(grp);
+            }
+        }
+        Q_EMIT dataChanged(index(0), index(qMax(0, rowCount() - 1)), {NameRole, LinkedNextRole, LinkedPrevRole});
+        jsontoSubtitle(toJson()); // rewrite edit file + recompile karaoke render + reattach filter
+        pCore->refreshProjectMonitorOnce();
+        return true;
+    };
+    Fun local_redo = [applyGroups, toRename, newGroup]() { return applyGroups(toRename, newGroup); };
+    Fun local_undo = [applyGroups, toRename, group]() { return applyGroups(toRename, group); };
+    local_redo();
+    pCore->pushUndo(local_undo, local_redo, i18n("Break subtitle link"));
+    qDebug() << "[break-link] subId" << subId << "moved" << int(toRename.size()) << "word(s) from group" << group << "to" << newGroup;
 }
 
 QString SubtitleModel::compileKaraoke(const QString &editFile)
@@ -1662,6 +1792,21 @@ void SubtitleModel::setSelected(int id, bool select)
 bool SubtitleModel::isSelected(int id) const
 {
     return m_selected.contains(id);
+}
+
+void SubtitleModel::clearSelection()
+{
+    if (m_selected.isEmpty()) {
+        return;
+    }
+    const QList<int> ids = m_selected;
+    m_selected.clear();
+    // Refresh the rows that were selected so the delegates repaint as deselected.
+    for (int id : ids) {
+        if (m_allSubtitles.count(id) > 0) {
+            updateSub(id, {SelectedRole});
+        }
+    }
 }
 
 int SubtitleModel::trackDuration() const

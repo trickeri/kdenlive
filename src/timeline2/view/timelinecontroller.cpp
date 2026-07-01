@@ -2152,6 +2152,12 @@ void TimelineController::selectAllClipsAtPosition(int position, bool add)
     }
     const std::unordered_set<int> tracks = m_model->getAllTracksIds();
     for (int trackId : tracks) {
+        // NULDRUMS: skip LOCKED tracks — pulling a locked-track clip (e.g. a pinned banner) into
+        // the selection makes the whole group un-movable and "locks out" the drag. Mirrors the
+        // Ctrl+A selectAll lock-skip. (Was: this grabbed the locked Twitch banner on drag-start.)
+        if (m_model->trackIsLocked(trackId)) {
+            continue;
+        }
         int cid = m_model->getClipByPosition(trackId, position);
         if (cid >= 0) {
             ids.insert(cid);
@@ -4095,8 +4101,17 @@ void TimelineController::switchTrackLock(bool applyToAll)
     if (!applyToAll) {
         // apply to active track only
         if (m_model->isSubtitleTrack(m_activeTrack)) {
-            // Subtitle track
-            switchSubtitleLock();
+            // NULDRUMS: clicking a caption silently makes the subtitle track the "active" track,
+            // so a stray Shift+L (neighbour of Shift+A/Shift+D/Shift+S) used to LOCK all captions
+            // — turning them pink and unselectable with no obvious cause. Guard against that:
+            // Shift+L may only UNLOCK the subtitle track (easy recovery). Locking is deliberate,
+            // via the track-head lock button (or Ctrl+Shift+L "all tracks").
+            if (subtitlesLocked()) {
+                switchSubtitleLock();
+            } else {
+                slotFlashLock(-2);
+                pCore->displayMessage(i18n("Lock the subtitle track with its track-head lock button"), InformationMessage, 3000);
+            }
         } else {
             bool locked = m_model->getTrackById_const(m_activeTrack)->isLocked();
             m_model->setTrackLockedState(m_activeTrack, !locked);

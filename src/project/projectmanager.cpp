@@ -443,6 +443,12 @@ bool ProjectManager::closeCurrentDocument(bool saveChanges, bool quit)
     if (guiConstructed && pCore->window()->hasRunningTask()) {
         return false;
     }
+    // Nuldrums: capture each timeline's zoom + scroll to the state-config sidecar while the QML is
+    // still alive (the tabs get torn down below, before closeTimeline() could read the view). This
+    // persists the view for navigation-only sessions without needing a save.
+    if (guiConstructed && m_project != nullptr && !m_project->loading) {
+        pCore->window()->persistTimelineViews();
+    }
     // Disable autosave
     m_autoSaveTimer.stop();
     m_autoSaveChangeCount = 0;

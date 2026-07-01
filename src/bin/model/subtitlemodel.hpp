@@ -137,6 +137,9 @@ public:
     /** @brief Mark the subtitle item as selected or not*/
     void setSelected(int id, bool select);
     bool isSelected(int id) const;
+    /** @brief Clear the selected flag on ALL subtitles (defensive: flush orphaned selection
+     * that desynced from the timeline's m_currentSelection, e.g. after delete+undo). */
+    void clearSelection();
     /** @brief Cut a subtitle */
     bool cutSubtitle(int layer, int position);
     /** @brief Cut a subtitle, return the id of newly created subtitle */

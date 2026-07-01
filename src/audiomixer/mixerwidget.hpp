@@ -91,6 +91,7 @@ private:
     QToolButton *m_monitor;
     QToolButton *m_muteButton;
     QToolButton *m_showEffects;
+    QToolButton *m_sidechain{nullptr};
     KSqueezedTextLabel *m_trackLabel;
     QMutex m_storeMutex;
     double m_lastVolume;
@@ -116,6 +117,11 @@ private:
     void setupFilters(Mlt::Tractor *service);
     void setupMasterControls();
     void setupTrackControls();
+
+    /** @brief Open the sidechain-ducking config dialog for this track */
+    void showSidechainDialog();
+    /** @brief Reflect the persisted sidechain state on the toolbar button */
+    void updateSidechainButton();
 
     /** @Update track label to reflect state */
     void updateTrackLabelStyle();

@@ -2278,8 +2278,11 @@ void MainWindow::setupActions()
     addAction(QStringLiteral("restyle_captions"), i18n("Restyle Captions from Settings"), this, SLOT(slotRestyleCaptions()),
               QIcon::fromTheme(QStringLiteral("edit-paint")));
     // Word-clip caption editor: chain selected word-clips into one displayed line, or break the chain.
+    // Shift+A = "attach": link the selected caption words (keeps the hand on the mouse). When no
+    // caption is selected the slot falls through to the old Shift+A action (toggle all tracks
+    // active), so nothing is lost. Its shortcut is removed from switch_all_targets below.
     addAction(QStringLiteral("link_subtitles"), i18n("Link Caption Words"), this, SLOT(slotLinkSubtitles()), QIcon::fromTheme(QStringLiteral("link")),
-              Qt::CTRL | Qt::Key_L);
+              Qt::SHIFT | Qt::Key_A);
     addAction(QStringLiteral("unlink_subtitles"), i18n("Unlink Caption Words"), this, SLOT(slotUnlinkSubtitles()),
               QIcon::fromTheme(QStringLiteral("remove-link")), Qt::CTRL | Qt::Key_U);
     addAction(QStringLiteral("delete_subtitle_clip"), i18n("Delete Subtitle"), this, SLOT(slotDeleteItem()), QIcon::fromTheme(QStringLiteral("edit-delete")));
@@ -2358,8 +2361,10 @@ void MainWindow::setupActions()
               Qt::SHIFT | Qt::Key_T, timelineActions);
     addAction(QStringLiteral("switch_active_target"), i18n("Toggle Track Active"), pCore->projectManager(), SLOT(slotSwitchTrackActive()), QIcon(), Qt::Key_A,
               timelineActions);
-    addAction(QStringLiteral("switch_all_targets"), i18n("Toggle All Tracks Active"), pCore->projectManager(), SLOT(slotSwitchAllTrackActive()), QIcon(),
-              Qt::SHIFT | Qt::Key_A, timelineActions);
+    // Shortcut moved to link_subtitles (Shift+A = "attach"); still reachable via menu and as the
+    // no-caption-selected fallback of slotLinkSubtitles(). Assign a new shortcut if ever needed.
+    addAction(QStringLiteral("switch_all_targets"), i18n("Toggle All Tracks Active"), pCore->projectManager(), SLOT(slotSwitchAllTrackActive()), QIcon(), {},
+              timelineActions);
     addAction(QStringLiteral("activate_all_targets"), i18n("Switch All Tracks Active"), pCore->projectManager(), SLOT(slotMakeAllTrackActive()), QIcon(),
               Qt::SHIFT | Qt::ALT | Qt::Key_A, timelineActions);
     addAction(QStringLiteral("restore_all_sources"), i18n("Restore Current Clip Target Tracks"), pCore->projectManager(), SLOT(slotRestoreTargetTracks()), {},
@@ -5186,6 +5191,37 @@ TimelineWidget *MainWindow::getTimeline(const QUuid uuid) const
     return m_timelineTabs->getTimeline(uuid);
 }
 
+void MainWindow::persistTimelineViews()
+{
+    KdenliveDoc *project = pCore->currentDoc();
+    if (project == nullptr || project->url().isEmpty()) {
+        return; // unsaved project: no stable file path to key the saved view on
+    }
+    KConfigGroup grp(KSharedConfig::openStateConfig(), QStringLiteral("TimelineView"));
+    const QString base = project->url().toLocalFile();
+    const QList<QUuid> uuids = project->getTimelinesUuids();
+    for (const QUuid &uuid : uuids) {
+        TimelineWidget *tl = getTimeline(uuid);
+        if (tl == nullptr || tl->controller() == nullptr) {
+            continue;
+        }
+        // Query the LIVE view before any teardown. The fork zooms via a continuous scale factor
+        // (Alt+wheel → setScaleFactorOnMouse), which bypasses the discrete zoom slider / doc "zoom"
+        // property — so we must persist the actual scaleFactor, not project->zoom(). getSequenceProperties()
+        // reads the QML scroll position directly.
+        QMap<QString, QString> props;
+        tl->controller()->getSequenceProperties(props);
+        const double scale = tl->controller()->scaleFactor();
+        const int scroll = props.value(QStringLiteral("scrollPos"), QStringLiteral("0")).toInt();
+        const int position = props.value(QStringLiteral("position"), QStringLiteral("0")).toInt();
+        const QString key = base + QLatin1Char('|') + uuid.toString();
+        grp.writeEntry(key + QStringLiteral("|scale"), scale);
+        grp.writeEntry(key + QStringLiteral("|scroll"), scroll);
+        grp.writeEntry(key + QStringLiteral("|position"), position);
+    }
+    grp.sync();
+}
+
 void MainWindow::getSequenceProperties(const QUuid &uuid, QMap<QString, QString> &props)
 {
     TimelineWidget *w = getTimeline(uuid);
@@ -5590,6 +5626,14 @@ void MainWindow::slotGenerateKaraokeCaptions()
                                 subModel->setSourceClipLink(id, srcBinId);
                             }
                         }
+                        // NULDRUMS: captions were just tagged with their source clip, so turn ON
+                        // the "link subtitles to clips" mode by default — the user expects the new
+                        // caption slices to follow (and delete with) their clip without having to
+                        // flip the track-head toggle first.
+                        if (!m_subtitleLinkMode) {
+                            m_subtitleLinkMode = true;
+                            Q_EMIT pCore->subtitleLinkModeChanged();
+                        }
                     }
                     pCore->displayMessage(i18n("Karaoke captions added to subtitle track"), OperationCompletedMessage);
                 } else {
@@ -5790,6 +5834,14 @@ void MainWindow::slotLinkSubtitles()
     if (TimelineWidget *tl = getCurrentTimeline()) {
         if (auto sub = tl->model()->getSubtitleModel()) {
             const QList<int> ids = selectedSubtitleIdsFrom(tl->model());
+            if (ids.isEmpty()) {
+                // Shift+A with no caption selected keeps its previous meaning (toggle all tracks
+                // active), so the reassigned shortcut is a no-loss overlay outside caption editing.
+                if (QAction *fallback = actionCollection()->action(QStringLiteral("switch_all_targets"))) {
+                    fallback->trigger();
+                }
+                return;
+            }
             qDebug() << "[link-subtitles] selected ids:" << ids;
             sub->linkSubtitles(ids);
         }
@@ -6332,12 +6384,37 @@ TimelineWidget *MainWindow::openTimeline(const QUuid &uuid, int ix, const QStrin
     KdenliveDoc *project = pCore->currentDoc();
     TimelineWidget *timeline =
         m_timelineTabs->addTimeline(uuid, ix, tabName, timelineModel, pCore->monitorManager()->projectMonitor()->getControllerProxy(), openInMonitor);
-    slotSetZoom(project->zoom(uuid).x(), false);
+    int restoreScroll = project->getSequenceProperty(uuid, QStringLiteral("scrollPos")).toInt();
+    double restoreScale = -1.; // <0 → no sidecar, fall back to the discrete zoom slider value
+    // Prefer the state-config sidecar (persistTimelineViews) — it captures the last view (real scale
+    // factor + scroll) even for navigation-only sessions that never got saved, whereas the project's
+    // sequence properties only update on a real save.
+    if (!project->url().isEmpty()) {
+        KConfigGroup grp(KSharedConfig::openStateConfig(), QStringLiteral("TimelineView"));
+        const QString key = project->url().toLocalFile() + QLatin1Char('|') + uuid.toString();
+        if (grp.hasKey(key + QStringLiteral("|scale"))) {
+            restoreScale = grp.readEntry(key + QStringLiteral("|scale"), -1.);
+            restoreScroll = grp.readEntry(key + QStringLiteral("|scroll"), restoreScroll);
+            // Also restore the playhead: overwrite the "position" sequence property so the existing
+            // monitor restore in ProjectManager (which reads it just after this) lands on the saved
+            // spot even for navigation-only sessions.
+            if (grp.hasKey(key + QStringLiteral("|position"))) {
+                project->setSequenceProperty(uuid, QStringLiteral("position"), grp.readEntry(key + QStringLiteral("|position"), 0));
+            }
+        }
+    }
+    if (restoreScale > 0.) {
+        // Restore the continuous zoom directly (the fork's Alt+wheel zoom is a scale factor, not a
+        // slider index); setScaleFactor also syncs the zoom slider via updateZoom().
+        getTimeline(uuid)->controller()->setScaleFactor(restoreScale);
+    } else {
+        slotSetZoom(project->zoom(uuid).x(), false);
+    }
     if (openInMonitor) {
         m_projectMonitor->slotLoadClipZone(project->zone(uuid));
     }
     getTimeline(uuid)->controller()->setZone(project->zone(uuid), false);
-    getTimeline(uuid)->controller()->setScrollPos(project->getSequenceProperty(uuid, QStringLiteral("scrollPos")).toInt());
+    getTimeline(uuid)->controller()->setScrollPos(restoreScroll);
     return timeline;
 }
 

@@ -130,6 +130,30 @@ Rectangle {
         }
     }
 
+    // Nuldrums: horizontal-scroll restore, retried until the timeline is laid out (see setScrollPos).
+    Timer {
+        id: applyScrollTimer
+        property int tries: 0
+        property real pendingX: 0
+        property real lastTarget: -2
+        interval: 50
+        repeat: true
+        onTriggered: {
+            tries++
+            if (scrollView.width <= 0 || root.timeline.duration <= 0 || root.timeScale <= 0) {
+                if (tries > 40) stop()
+                return
+            }
+            var maxX = Math.max(0, root.timeline.duration * root.timeScale - scrollView.width)
+            var target = Math.max(0, Math.min(pendingX, maxX))
+            scrollView.contentX = target
+            if (Math.abs(target - lastTarget) < 1 || tries > 40) {
+                stop() // layout converged
+            }
+            lastTarget = target
+        }
+    }
+
     signal clipClicked()
     signal showClipMenu(int cid)
     signal showMixMenu(int cid)
@@ -433,7 +457,16 @@ Rectangle {
     }
 
     function setScrollPos(pos) {
-        return scrollView.contentX = pos
+        // Nuldrums: restore the horizontal scroll through a retry timer (like applyVerticalView),
+        // because on project/tab open this runs BEFORE the timeline is laid out — scrollView.width
+        // and timeScale are still 0, so a one-shot clamp/apply is a no-op. The timer waits for the
+        // layout, clamps to the CONTENT extent (so a stale value saved when the sequence was longer
+        // can't park the view in empty space past the last clip), applies, and repeats until settled.
+        applyScrollTimer.stop()
+        applyScrollTimer.pendingX = pos
+        applyScrollTimer.tries = 0
+        applyScrollTimer.lastTarget = -2
+        applyScrollTimer.restart()
     }
 
     function getCopiedItemId() {

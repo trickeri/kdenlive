@@ -15,7 +15,14 @@
 #include "mlt++/MltEvent.h"
 #include "mlt++/MltFilter.h"
 #include "mlt++/MltTractor.h"
+#include "timeline2/model/timelineitemmodel.hpp"
+#include "timeline2/model/trackmodel.hpp"
 #include "utils/styledspinbox.hpp"
+
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 
 #include <KDualAction>
 #include <KLocalizedString>
@@ -270,6 +277,15 @@ void MixerWidget::buildControlButtons()
         m_monitor->setWhatsThis(xi18nc("@info:whatsthis", "Puts the audio track into recording mode."));
         m_monitor->setCheckable(true);
         m_monitor->setAutoRaise(true);
+
+        // nuldrums: sidechain ducking button (duck this track under a chosen key track)
+        m_sidechain = new QToolButton(this);
+        m_sidechain->setIcon(QIcon::fromTheme("audio-volume-low"));
+        m_sidechain->setToolTip(i18n("Sidechain ducking"));
+        m_sidechain->setWhatsThis(xi18nc("@info:whatsthis", "Ducks this track (music / game audio) whenever a chosen key track (e.g. your mic) is active, "
+                                                            "like an OBS sidechain compressor. Click to pick the key track and set the compressor."));
+        m_sidechain->setCheckable(true);
+        m_sidechain->setAutoRaise(true);
     } else {
         m_collapse = new QToolButton(this);
         m_collapse->setIcon(KdenliveSettings::mixerCollapse() ? QIcon::fromTheme("arrow-left") : QIcon::fromTheme("arrow-right"));
@@ -358,6 +374,9 @@ void MixerWidget::setupLayouts()
     if (m_monitor) {
         buttonslay->addWidget(m_monitor);
     }
+    if (m_sidechain) {
+        buttonslay->addWidget(m_sidechain);
+    }
     buttonslay->addWidget(m_showEffects);
     lay->addLayout(buttonslay);
 
@@ -439,6 +458,11 @@ void MixerWidget::setupConnections()
             m_collapse->setIcon(m_collapse->isChecked() ? QIcon::fromTheme("arrow-left") : QIcon::fromTheme("arrow-right"));
             m_manager->collapseMixers();
         });
+    }
+    if (m_sidechain) {
+        // Ignore the checkable toggle from the click; the dialog result is authoritative.
+        connect(m_sidechain, &QToolButton::clicked, this, [&]() { showSidechainDialog(); });
+        updateSidechainButton();
     }
     connect(m_showEffects, &QToolButton::clicked, this, [&]() { Q_EMIT m_manager->showEffectStack(m_tid); });
 
@@ -743,4 +767,99 @@ void MixerWidget::setBackgroundColor(QPalette::ColorRole role)
     QPalette pal = palette();
     pal.setColor(QPalette::Window, getMixerBackgroundColor());
     setPalette(pal);
+}
+
+void MixerWidget::updateSidechainButton()
+{
+    if (!m_sidechain || !m_manager) {
+        return;
+    }
+    auto model = m_manager->model();
+    int source = 0;
+    if (model) {
+        source = model->getTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_source")).toInt();
+    }
+    QSignalBlocker bk(m_sidechain);
+    m_sidechain->setChecked(source > 0);
+    m_sidechain->setIcon(QIcon::fromTheme(source > 0 ? QStringLiteral("audio-volume-muted") : QStringLiteral("audio-volume-low")));
+    if (source > 0 && model) {
+        // Resolve the key track's tag for the tooltip.
+        QString keyTag;
+        const QList<int> audioIds = model->getTracksIds(true);
+        for (int id : audioIds) {
+            if (model->getTrackMltIndex(id) == source) {
+                keyTag = model->getTrackTagById(id);
+                break;
+            }
+        }
+        m_sidechain->setToolTip(i18n("Ducking under %1", keyTag.isEmpty() ? i18n("another track") : keyTag));
+    } else {
+        m_sidechain->setToolTip(i18n("Sidechain ducking"));
+    }
+}
+
+void MixerWidget::showSidechainDialog()
+{
+    auto model = m_manager ? m_manager->model() : nullptr;
+    if (!model) {
+        return;
+    }
+    const int carrierMlt = model->getTrackMltIndex(m_tid);
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(i18n("Sidechain Ducking — %1", m_trackTag));
+    auto *form = new QFormLayout(&dlg);
+
+    auto *keyCombo = new QComboBox(&dlg);
+    keyCombo->addItem(i18n("None (off)"), 0);
+    const QList<int> audioIds = model->getTracksIds(true);
+    for (int id : audioIds) {
+        const int mlt = model->getTrackMltIndex(id);
+        if (mlt == carrierMlt) {
+            continue; // a track cannot duck from itself
+        }
+        keyCombo->addItem(i18n("%1 (voice / key)", model->getTrackTagById(id)), mlt);
+    }
+    const int curSource = model->getTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_source")).toInt();
+    int comboIdx = keyCombo->findData(curSource);
+    keyCombo->setCurrentIndex(comboIdx < 0 ? 0 : comboIdx);
+    form->addRow(i18n("Key (voice) track:"), keyCombo);
+
+    auto addSpin = [&](const QString &label, const QString &prop, double def, double lo, double hi, const QString &suffix, int decimals) {
+        auto *sp = new QDoubleSpinBox(&dlg);
+        sp->setRange(lo, hi);
+        sp->setDecimals(decimals);
+        sp->setSuffix(suffix);
+        const QString v = model->getTrackProperty(m_tid, prop).toString();
+        sp->setValue(v.isEmpty() ? def : v.toDouble());
+        form->addRow(label, sp);
+        return sp;
+    };
+    QDoubleSpinBox *thr = addSpin(i18n("Threshold:"), QStringLiteral("kdenlive:sidechain_threshold"), -30, -60, 0, i18n(" dB"), 1);
+    QDoubleSpinBox *rat = addSpin(i18n("Ratio:"), QStringLiteral("kdenlive:sidechain_ratio"), 8, 1, 20, QStringLiteral(":1"), 1);
+    QDoubleSpinBox *att = addSpin(i18n("Attack:"), QStringLiteral("kdenlive:sidechain_attack"), 10, 0, 500, i18n(" ms"), 0);
+    QDoubleSpinBox *rel = addSpin(i18n("Release:"), QStringLiteral("kdenlive:sidechain_release"), 250, 0, 2000, i18n(" ms"), 0);
+    QDoubleSpinBox *rng = addSpin(i18n("Max attenuation:"), QStringLiteral("kdenlive:sidechain_range"), -24, -60, 0, i18n(" dB"), 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted) {
+        updateSidechainButton(); // revert any transient toggle
+        return;
+    }
+
+    const int source = keyCombo->currentData().toInt();
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_source"), QString::number(source));
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_threshold"), QString::number(thr->value()));
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_ratio"), QString::number(rat->value()));
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_attack"), QString::number(att->value()));
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_release"), QString::number(rel->value()));
+    model->setTrackProperty(m_tid, QStringLiteral("kdenlive:sidechain_range"), QString::number(rng->value()));
+
+    // Rebuild the audio routing so the nulduck transition is (re)planted for this track.
+    model->buildTrackCompositing(true);
+    updateSidechainButton();
 }

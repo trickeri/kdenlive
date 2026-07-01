@@ -18,6 +18,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QMenu>
 #include <QScreen>
@@ -51,15 +52,13 @@ RecManager::RecManager(Monitor *parent)
     m_recToolbar->addWidget(spacer);
 
     m_audio_device = new QComboBox(parent);
-    QStringList audioDevices = pCore->getAudioCaptureDevices();
-    m_audio_device->addItems(audioDevices);
+    // Do NOT enumerate audio-capture devices here: QMediaDevices::audioInputs() spins up PipeWire
+    // device discovery which can SIGSEGV inside Qt Multimedia's PipeWire backend during startup
+    // (seen with a busy graph). Defer it to the first time the record toolbar is shown — see
+    // eventFilter()/loadAudioDevices(). Recording via OBS/PipeWire never trips it.
     connect(m_audio_device, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, &RecManager::slotAudioDeviceChanged);
-    QString selectedDevice = KdenliveSettings::defaultaudiocapture();
-    int selectedIndex = m_audio_device->findText(selectedDevice);
-    if (!selectedDevice.isNull() && selectedIndex > -1) {
-        m_audio_device->setCurrentIndex(selectedIndex);
-    }
     m_recToolbar->addWidget(m_audio_device);
+    m_recToolbar->installEventFilter(this);
 
     m_audioCaptureSlider = new QSlider(Qt::Vertical);
     m_audioCaptureSlider->setRange(0, 100);
@@ -89,7 +88,7 @@ RecManager::RecManager(Monitor *parent)
     // m_device_selector->addItems(QStringList() << i18n("Firewire") << i18n("Webcam") << i18n("Screen Grab") << i18n("Blackmagic Decklink"));
     m_device_selector->addItem(i18n("Webcam"), Video4Linux);
     m_device_selector->addItem(i18n("Screen Grab"), ScreenGrab);
-    selectedIndex = m_device_selector->findData(KdenliveSettings::defaultcapture());
+    int selectedIndex = m_device_selector->findData(KdenliveSettings::defaultcapture());
 
     if (selectedIndex > -1) {
         m_device_selector->setCurrentIndex(selectedIndex);
@@ -118,6 +117,30 @@ void RecManager::showRecConfig()
 QToolBar *RecManager::toolbar() const
 {
     return m_recToolbar;
+}
+
+bool RecManager::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_recToolbar && event->type() == QEvent::Show && !m_audioDevicesLoaded) {
+        loadAudioDevices();
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void RecManager::loadAudioDevices()
+{
+    // Deferred until the record toolbar is first shown (see eventFilter): QMediaDevices::audioInputs()
+    // triggers PipeWire enumeration, which has been observed to SIGSEGV during startup.
+    m_audioDevicesLoaded = true;
+    const QStringList audioDevices = pCore->getAudioCaptureDevices();
+    QSignalBlocker blocker(m_audio_device);
+    m_audio_device->clear();
+    m_audio_device->addItems(audioDevices);
+    const QString selectedDevice = KdenliveSettings::defaultaudiocapture();
+    const int selectedIndex = m_audio_device->findText(selectedDevice);
+    if (!selectedDevice.isNull() && selectedIndex > -1) {
+        m_audio_device->setCurrentIndex(selectedIndex);
+    }
 }
 
 QAction *RecManager::recAction() const

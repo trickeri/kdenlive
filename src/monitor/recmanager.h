@@ -49,7 +49,16 @@ public:
     /** @brief: stop capture and hide rec panel **/
     void stop();
 
+protected:
+    /** @brief Nuldrums: populate the audio-capture device combo the first time the record toolbar
+     * is shown, so QMediaDevices::audioInputs() (PipeWire enumeration, a known SIGSEGV risk in Qt
+     * Multimedia's PipeWire backend) never runs during startup. */
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
+    /** @brief Enumerate audio capture devices and fill m_audio_device (deferred, see eventFilter). */
+    void loadAudioDevices();
+    bool m_audioDevicesLoaded{false};
     Monitor *m_monitor;
     QAction *m_switchRec;
     QString m_captureFolder;

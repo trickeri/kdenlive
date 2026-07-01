@@ -837,6 +837,29 @@ void TimelineItemModel::buildTrackCompositing(bool rebuild)
             field->plant_transition(*transition.get(), 0, trackPos);
             videoTracks++;
         } else if ((*it)->isAudioTrack()) {
+            // nuldrums: sidechain ducking -- this (carrier) track is attenuated by the
+            // envelope of a chosen key track. Planted BEFORE the mix so the ducked audio
+            // is what gets summed to master. Config lives on the carrier track's
+            // kdenlive:sidechain_* props (persisted + rebuilt here on every load).
+            int keyTrackPos = (*it)->getProperty(QStringLiteral("kdenlive:sidechain_source")).toInt();
+            if (keyTrackPos > 0 && keyTrackPos != trackPos) {
+                std::unique_ptr<Mlt::Transition> duck = TransitionsRepository::get()->getTransition(QStringLiteral("nulduck"));
+                if (duck && duck->is_valid()) {
+                    auto dparam = [&it](const QString &key, double def) {
+                        QString v = (*it)->getProperty(key).toString();
+                        return v.isEmpty() ? def : v.toDouble();
+                    };
+                    duck->set("internal_added", 237);
+                    duck->set("always_active", 1);
+                    duck->set("threshold", dparam(QStringLiteral("kdenlive:sidechain_threshold"), -30.0));
+                    duck->set("ratio", dparam(QStringLiteral("kdenlive:sidechain_ratio"), 8.0));
+                    duck->set("attack", dparam(QStringLiteral("kdenlive:sidechain_attack"), 10.0));
+                    duck->set("release", dparam(QStringLiteral("kdenlive:sidechain_release"), 250.0));
+                    duck->set("range", dparam(QStringLiteral("kdenlive:sidechain_range"), -24.0));
+                    duck->set_tracks(trackPos, keyTrackPos);
+                    field->plant_transition(*duck.get(), trackPos, keyTrackPos);
+                }
+            }
             // audio mix
             std::unique_ptr<Mlt::Transition> transition = TransitionsRepository::get()->getTransition(QStringLiteral("mix"));
             transition->set("internal_added", 237);

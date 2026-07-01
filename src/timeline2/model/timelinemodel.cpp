@@ -7518,7 +7518,19 @@ bool TimelineModel::requestClearSelection(bool onDeletion)
         m_selectedMix = -1;
         Q_EMIT selectedMixChanged(-1, nullptr);
     }
+    // NULDRUMS: subtitle "selected" flags (SubtitleModel::m_selected) can desync from
+    // m_currentSelection — e.g. after select-all + delete + undo, the caption clips come
+    // back flagged selected but were never re-registered in the timeline selection. That
+    // left them stuck (Escape / click / rubber-band all early-return here). Flush any such
+    // orphaned flags on every clear so the captions always deselect.
+    bool hadOrphanSubs = m_subtitleModel && !m_subtitleModel->selectedSubtitleIds().isEmpty();
+    if (hadOrphanSubs) {
+        m_subtitleModel->clearSelection();
+    }
     if (m_currentSelection.size() == 0) {
+        if (hadOrphanSubs) {
+            Q_EMIT selectionChanged();
+        }
         TRACE_RES(true);
         return true;
     }
@@ -7681,7 +7693,9 @@ void TimelineModel::requestRemoveFromSelection(int itemId)
 bool TimelineModel::requestSetSelection(const std::unordered_set<int> &ids)
 {
     TRACE(ids);
-    if (m_currentSelection.size() > 0) {
+    // NULDRUMS: also clear when only orphaned subtitle-selection flags remain (m_currentSelection
+    // empty but captions still flagged selected), so a rubber-band elsewhere deselects them.
+    if (m_currentSelection.size() > 0 || (m_subtitleModel && !m_subtitleModel->selectedSubtitleIds().isEmpty())) {
         requestClearSelection();
     }
     QWriteLocker locker(&m_lock);

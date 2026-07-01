@@ -30,6 +30,8 @@ public:
     void registerTrack(int tid, Mlt::Tractor *service, const QString &trackTag, const QString &trackName);
     void deregisterTrack(int tid);
     void setModel(std::shared_ptr<TimelineItemModel> model);
+    /** @brief Access the current timeline model (used by the mixer's sidechain UI) */
+    std::shared_ptr<TimelineItemModel> model() { return m_model; }
     void cleanup();
     /** @brief Connect the mixer widgets to the correspondent filters */
     void connectMixer(bool doConnect);
