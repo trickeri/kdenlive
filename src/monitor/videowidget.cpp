@@ -352,9 +352,16 @@ void VideoWidget::requestSeek(int position, bool noAudioScrub)
     if (!m_consumer) {
         return;
     }
-    if (!qFuzzyIsNull(m_producer->get_speed())) {
-        m_consumer->purge();
-    }
+    qWarning() << "[mon-dbg] SEEK pos=" << position << "speed=" << m_producer->get_speed() << "stopped=" << m_consumer->is_stopped() << "id=" << m_id;
+    m_dbgTimer.restart();
+    m_dbgFrameCount.storeRelaxed(0);
+    // Nuldrums: ALWAYS purge, not only while playing. With a multi-threaded consumer
+    // (real_time = N) the read-ahead keeps the frame queue filled even while PAUSED, so a
+    // paused scrub-seek pops STALE frames: the refresh delivers the old position (or a
+    // rendered=0 drop), the monitor shows nothing/old content, positionFromConsumer snaps the
+    // playhead back, and the next play first drains seconds of stale queue. Purging makes the
+    // sought frame the next thing rendered.
+    m_consumer->purge();
     restartConsumer();
     m_consumer->set("refresh", 1);
     if (KdenliveSettings::audio_scrub() && !noAudioScrub) {
@@ -385,6 +392,15 @@ void VideoWidget::refresh()
     m_refreshTimer.stop();
     QMutexLocker locker(&m_mltMutex);
     if (m_consumer) {
+        qWarning() << "[mon-dbg] REFRESH speed=" << (m_producer ? m_producer->get_speed() : -99.) << "stopped=" << m_consumer->is_stopped() << "id=" << m_id;
+        m_dbgTimer.restart();
+        m_dbgFrameCount.storeRelaxed(0);
+        // Nuldrums: when paused, drop any read-ahead frames pre-rendered from the OLD project
+        // state — a paused refresh means something changed (edit, effect, seek debounce) and the
+        // multi-threaded queue would otherwise serve stale frames. Cheap: refill is ~6 frames.
+        if (m_producer && qFuzzyIsNull(m_producer->get_speed())) {
+            m_consumer->purge();
+        }
         restartConsumer();
         m_consumer->set("refresh", 1);
     }
@@ -832,14 +848,18 @@ int VideoWidget::reconfigure()
             m_consumer->connect(*m_producer.get());
         }
 
-        // Nuldrums: spend the (idle, beefy) CPU on buttery playback. MLT frame-threads the render
-        // (real_time = N renders N frames in parallel), so a heavy timeline stays well ahead of
-        // realtime and never starves the audio consumer -> no more moving-crackle xruns. 16 parallel
-        // frame renders already saturates what any timeline needs; beyond that is pure latency/RAM
-        // waste with no smoothness gain (raise the cap if you really want every core). Sign carries
-        // the drop-frames pref (drop keeps A/V sync if we ever fall behind; we essentially never do).
-        int renderThreads = qBound(4, QThread::idealThreadCount() - 2, 16);
-        m_consumer->set("real_time", KdenliveSettings::monitor_dropframes() ? renderThreads : -renderThreads);
+        // Nuldrums: consumer threading. MEASURED on the vertical-short timeline (4 layers +
+        // Transforms + subtitles): multi-worker real_time (|N|>1) degenerates to SINGLE-CORE
+        // synchronous rendering here (MLT service locks serialize the graph; 100% CPU, 40ms/frame,
+        // resolution-invariant) — and in drop mode (+N) any purge/seek permanently starves the
+        // queue so EVERY frame arrives rendered=0 (black monitor, 11s measured). The classic
+        // single-thread modes (real_time = 1 / -1) run MLT's true read-ahead thread instead.
+        // NULDRUMS_RT overrides for measurement.
+        // Default -16: measured best sustained cadence on the vertical-short timeline (~40ms/frame
+        // vs ~80ms at ±1) — the workers pipeline frames even though MLT's services serialize within
+        // a frame. Costs ~1.9s play-start (queue prime) vs 0.5s at -1. Negative = no-drop (see above).
+        int rt = qEnvironmentVariableIsSet("NULDRUMS_RT") ? qEnvironmentVariableIntValue("NULDRUMS_RT") : -16;
+        m_consumer->set("real_time", rt);
         m_consumer->set("channels", pCore->audioChannels());
         if (KdenliveSettings::previewScaling() > 1) {
             m_consumer->set("scale", 1.0 / KdenliveSettings::previewScaling());
@@ -880,12 +900,12 @@ int VideoWidget::reconfigure()
         // m_consumer->set("progressive", 1);
         m_consumer->set("rescale", KdenliveSettings::mltinterpolation().toUtf8().constData());
         m_consumer->set("deinterlacer", KdenliveSettings::mltdeinterlacer().toUtf8().constData());
-        // Nuldrums: crackle that MOVES between playbacks is a buffer underrun (xrun), not signal
-        // clipping. On a heavy timeline (many video tracks + Transform effects) the render thread
-        // briefly stalls and, with MLT's small default audio buffer, the SDL audio ring runs dry ->
-        // crackle wherever the stall lands. Give it real headroom so brief stalls don't underrun.
-        // ~85ms at 48kHz — fine for playback (scrubbing has its own path).
-        m_consumer->set("audio_buffer", 4096);
+        // Nuldrums: audio buffer size (samples). Large values (4096 = 85ms @48kHz) quantize the
+        // audio clock that video paces against — measured ~40ms/frame cadence (25fps) instead of
+        // 33ms. NULDRUMS_ABUF overrides for measurement; unset = MLT/SDL default.
+        if (qEnvironmentVariableIsSet("NULDRUMS_ABUF")) {
+            m_consumer->set("audio_buffer", qEnvironmentVariableIntValue("NULDRUMS_ABUF"));
+        }
         int fps = qRound(pCore->getCurrentFps());
         // NB: keep the read-ahead SHALLOW (upstream depth). An earlier 2s-deep buffer made every
         // seek/scrub go blank while the queue refilled and delayed play-start by seconds. With the
@@ -1101,11 +1121,24 @@ void VideoWidget::resetConsumer(bool fullReset)
 void VideoWidget::on_frame_show(mlt_consumer, VideoWidget *widget, mlt_event_data data)
 {
     auto frame = Mlt::EventData(data).to_frame();
+    // Nuldrums [mon-dbg]: log what the consumer actually delivers after an interaction — the
+    // frame position, whether it was rendered (dropped frames arrive rendered=0 and are never
+    // shown), and whether the display semaphore skipped it.
+    const int dbgN = widget->m_dbgFrameCount.fetchAndAddRelaxed(1);
+    const bool dbgLog = dbgN < 20 || (dbgN % 30 == 0);
     if (frame.is_valid() && frame.get_int("rendered")) {
         int timeout = (widget->consumer()->get_int("real_time") > 0) ? 0 : 1000;
         if ((widget->m_frameRenderer != nullptr) && widget->m_frameRenderer->semaphore()->tryAcquire(1, timeout)) {
+            if (dbgLog) {
+                qWarning() << "[mon-dbg] SHOW #" << dbgN << "pos=" << frame.get_position() << "ms=" << widget->m_dbgTimer.elapsed();
+            }
             QMetaObject::invokeMethod(widget->m_frameRenderer, "showFrame", Qt::QueuedConnection, Q_ARG(Mlt::Frame, frame));
+        } else if (dbgLog) {
+            qWarning() << "[mon-dbg] SKIP-sem #" << dbgN << "pos=" << frame.get_position() << "ms=" << widget->m_dbgTimer.elapsed();
         }
+    } else if (dbgLog) {
+        qWarning() << "[mon-dbg] DROP #" << dbgN << "valid=" << frame.is_valid() << "rendered=" << (frame.is_valid() ? frame.get_int("rendered") : -1)
+                   << "pos=" << (frame.is_valid() ? frame.get_position() : -1) << "ms=" << widget->m_dbgTimer.elapsed();
     }
 }
 
@@ -1253,6 +1286,10 @@ bool VideoWidget::loopClip(std::pair<int, int> inOut)
 
 void VideoWidget::setProducerSpeed(double speed)
 {
+    qWarning() << "[mon-dbg] SPEED ->" << speed << "pos=" << (m_producer ? m_producer->position() : -1)
+               << "consumerStopped=" << (m_consumer ? m_consumer->is_stopped() : -1) << "id=" << m_id;
+    m_dbgTimer.restart();
+    m_dbgFrameCount.storeRelaxed(0);
     m_producer->set_speed(speed);
     m_proxy->setSpeed(speed);
 }

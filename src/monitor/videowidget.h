@@ -12,6 +12,7 @@
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 
+#include <QElapsedTimer>
 #include <QQuickWidget>
 #include <QRect>
 #include <QSemaphore>
@@ -232,6 +233,10 @@ private:
     std::unique_ptr<Mlt::Event> m_displayEvent;
     FrameRenderer *m_frameRenderer;
     QTimer m_refreshTimer;
+    // Nuldrums [mon-dbg] instrumentation: time from last user interaction (seek/refresh/speed)
+    // to the frames the consumer actually delivers (read from the consumer thread).
+    QElapsedTimer m_dbgTimer;
+    QAtomicInt m_dbgFrameCount;
     int m_colorSpace;
     double m_dar;
     bool m_isZoneMode;

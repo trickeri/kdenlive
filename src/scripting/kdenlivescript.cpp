@@ -375,7 +375,12 @@ void KdenliveScript::renderFrame(const QString &path)
 
 void KdenliveScript::playPause()
 {
-    if (pCore->monitorManager()) {
+    // Deterministic for scripting: always drive the PROJECT monitor. The active-monitor
+    // slotPlay() depends on window focus, which is meaningless for headless callers.
+    if (pCore->monitorManager() && pCore->monitorManager()->projectMonitor()) {
+        pCore->monitorManager()->activateMonitor(Kdenlive::ProjectMonitor);
+        pCore->monitorManager()->projectMonitor()->slotPlay();
+    } else if (pCore->monitorManager()) {
         pCore->monitorManager()->slotPlay();
     }
 }
