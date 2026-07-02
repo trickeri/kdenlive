@@ -34,6 +34,7 @@
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QStyle>
+#include <QThread>
 #include <QtGlobal>
 #include <memory>
 
@@ -831,11 +832,14 @@ int VideoWidget::reconfigure()
             m_consumer->connect(*m_producer.get());
         }
 
-        int dropFrames = 1;
-        if (!KdenliveSettings::monitor_dropframes()) {
-            dropFrames = -dropFrames;
-        }
-        m_consumer->set("real_time", dropFrames);
+        // Nuldrums: spend the (idle, beefy) CPU on buttery playback. MLT frame-threads the render
+        // (real_time = N renders N frames in parallel), so a heavy timeline stays well ahead of
+        // realtime and never starves the audio consumer -> no more moving-crackle xruns. 16 parallel
+        // frame renders already saturates what any timeline needs; beyond that is pure latency/RAM
+        // waste with no smoothness gain (raise the cap if you really want every core). Sign carries
+        // the drop-frames pref (drop keeps A/V sync if we ever fall behind; we essentially never do).
+        int renderThreads = qBound(4, QThread::idealThreadCount() - 2, 16);
+        m_consumer->set("real_time", KdenliveSettings::monitor_dropframes() ? renderThreads : -renderThreads);
         m_consumer->set("channels", pCore->audioChannels());
         if (KdenliveSettings::previewScaling() > 1) {
             m_consumer->set("scale", 1.0 / KdenliveSettings::previewScaling());
@@ -876,18 +880,30 @@ int VideoWidget::reconfigure()
         // m_consumer->set("progressive", 1);
         m_consumer->set("rescale", KdenliveSettings::mltinterpolation().toUtf8().constData());
         m_consumer->set("deinterlacer", KdenliveSettings::mltdeinterlacer().toUtf8().constData());
-        /*
-#ifdef Q_OS_WIN
-        m_consumer->set("audio_buffer", 2048);
-#else
-        m_consumer->set("audio_buffer", 512);
-#endif
-        */
+        // Nuldrums: crackle that MOVES between playbacks is a buffer underrun (xrun), not signal
+        // clipping. On a heavy timeline (many video tracks + Transform effects) the render thread
+        // briefly stalls and, with MLT's small default audio buffer, the SDL audio ring runs dry ->
+        // crackle wherever the stall lands. Give it real headroom so brief stalls don't underrun.
+        // ~85ms at 48kHz — fine for playback (scrubbing has its own path).
+        m_consumer->set("audio_buffer", 4096);
         int fps = qRound(pCore->getCurrentFps());
+        // NB: keep the read-ahead SHALLOW (upstream depth). An earlier 2s-deep buffer made every
+        // seek/scrub go blank while the queue refilled and delayed play-start by seconds. With the
+        // parallel render threads above (and all-intra NVENC proxies for heavy sources) a shallow
+        // queue refills instantly and stays full at speed.
         m_consumer->set("buffer", qMax(25, fps));
         m_consumer->set("prefill", 6);
         m_consumer->set("drop_max", fps / 4);
         m_consumer->set("scrub_audio", KdenliveSettings::audio_scrub());
+        // Nuldrums audio-clip diagnostic: dump the resolved audio-consumer config on every
+        // (re)configure. If playback crackles WITHOUT the mixer meter pegging 0dB (no
+        // "[audio-clip]" lines), it's a buffer xrun/underrun — inspect these values (backend,
+        // channels vs device, audio_buffer, real_time threads). Grep the terminal for "[audio-diag]".
+        qWarning() << "[audio-diag] backend=" << serviceName << "driver=" << m_consumer->get("audio_driver") << "device=" << m_consumer->get("audio_device")
+                   << "channels=" << m_consumer->get_int("channels") << "audio_buffer=" << m_consumer->get("audio_buffer")
+                   << "frequency=" << m_consumer->get("frequency") << "real_time=" << m_consumer->get_int("real_time")
+                   << "buffer=" << m_consumer->get_int("buffer") << "prefill=" << m_consumer->get_int("prefill")
+                   << "drop_max=" << m_consumer->get_int("drop_max") << "volume=" << m_consumer->get("volume") << "fps=" << fps;
         switch (pCore->getProjectProfile().colorspace()) {
         case 601:
         case 170:

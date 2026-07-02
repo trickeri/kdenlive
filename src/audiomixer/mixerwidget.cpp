@@ -51,10 +51,16 @@ void MixerWidget::property_changed(mlt_service, MixerWidget *widget, mlt_event_d
         int pos = mlt_properties_get_int(filter_props, "_position");
         if (!widget->m_levels.contains(pos)) {
             QVector<double> levels;
+            double maxDb = -100.0;
             for (int i = 0; i < widget->m_channels; i++) {
                 // NOTE: this is an approximation. To get the real peak level, we need version 2 of audiolevel MLT filter, see property_changedV2
-                levels << log10(mlt_properties_get_double(filter_props, QStringLiteral("_audio_level.%1").arg(i).toUtf8().constData()) / 1.18) * 20;
+                double db = log10(mlt_properties_get_double(filter_props, QStringLiteral("_audio_level.%1").arg(i).toUtf8().constData()) / 1.18) * 20;
+                levels << db;
+                if (db > maxDb) {
+                    maxDb = db;
+                }
             }
+            widget->logIfClipping(maxDb, pos);
             widget->m_levels[pos] = std::move(levels);
             if (widget->m_levels.size() > widget->m_maxLevels) {
                 widget->m_levels.erase(widget->m_levels.begin());
@@ -70,14 +76,35 @@ void MixerWidget::property_changedV2(mlt_service, MixerWidget *widget, mlt_event
         int pos = mlt_properties_get_int(filter_props, "_position");
         if (!widget->m_levels.contains(pos)) {
             QVector<double> levels;
+            double maxDb = -100.0;
             for (int i = 0; i < widget->m_channels; i++) {
-                levels << mlt_properties_get_double(filter_props, QStringLiteral("_audio_level.%1").arg(i).toUtf8().constData());
+                double db = mlt_properties_get_double(filter_props, QStringLiteral("_audio_level.%1").arg(i).toUtf8().constData());
+                levels << db;
+                if (db > maxDb) {
+                    maxDb = db;
+                }
             }
+            widget->logIfClipping(maxDb, pos);
             widget->m_levels[pos] = std::move(levels);
             if (widget->m_levels.size() > widget->m_maxLevels) {
                 widget->m_levels.erase(widget->m_levels.begin());
             }
         }
+    }
+}
+
+void MixerWidget::logIfClipping(double maxDb, int pos)
+{
+    // Nuldrums audio-clip diagnostic. A meter peak reaching 0 dBFS on plain playback means the
+    // SIGNAL is genuinely clipping (distortion) — distinct from a buffer xrun/dropout (which shows
+    // as crackle WITHOUT the meter pegging). Logs which track and how hot, throttled so a sustained
+    // clip prints ~1 line/sec instead of one per frame. Grep the terminal for "[audio-clip]".
+    if (maxDb >= -0.2) {
+        if ((m_clipLogThrottle++ % 15) == 0) {
+            qWarning() << "[audio-clip] track" << m_trackTag << "peak(dB)=" << maxDb << ">= 0dBFS (SIGNAL CLIPPING) pos=" << pos << "channels=" << m_channels;
+        }
+    } else {
+        m_clipLogThrottle = 0;
     }
 }
 

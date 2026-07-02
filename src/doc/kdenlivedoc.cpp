@@ -2310,6 +2310,11 @@ void KdenliveDoc::initProxySettings()
     if (!KdenliveSettings::supportedHWCodecs().isEmpty()) {
         QString codecFormat = QStringLiteral("x264-");
         codecFormat.append(KdenliveSettings::supportedHWCodecs().constFirst().section(QLatin1Char('_'), 1));
+        // Nuldrums: with NVENC available, prefer the full-resolution all-intra profile —
+        // instant scrub + light decode with NO resolution loss (preview == final output).
+        if (codecFormat == QLatin1String("x264-nvenc") && values.contains(QStringLiteral("x264-nvenc-fullres"))) {
+            codecFormat = QStringLiteral("x264-nvenc-fullres");
+        }
         if (values.contains(codecFormat)) {
             params = values.value(codecFormat);
         }

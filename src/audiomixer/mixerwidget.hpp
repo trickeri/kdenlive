@@ -43,6 +43,9 @@ public:
     void clear();
     static void property_changed(mlt_service, MixerWidget *self, mlt_event_data data);
     static void property_changedV2(mlt_service, MixerWidget *widget, mlt_event_data data);
+    /** @brief Nuldrums diagnostic: log (throttled) when this track's meter peak reaches 0 dBFS
+     * during playback = true signal clipping. See mixerwidget.cpp for the xrun-vs-clip rationale. */
+    void logIfClipping(double maxDb, int pos);
     void setTrackName(const QString &name);
     void setMute(bool mute);
     /** @brief Returns true if track is muted
@@ -77,6 +80,9 @@ protected:
     std::shared_ptr<Mlt::Filter> m_balanceFilter;
     QMap<int, QVector<double>> m_levels;
     int m_channels;
+    /** @brief Nuldrums audio-clip diagnostic: throttle counter so a clipping (>=0dBFS) meter
+     * only logs occasionally instead of once per frame. See MixerWidget::property_changed. */
+    int m_clipLogThrottle{0};
     KDualAction *m_muteAction;
     StyledSpinBox *m_balanceSpin;
     AudioSlider *m_balanceSlider;
