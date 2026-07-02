@@ -122,6 +122,8 @@ void ProxyTask::run()
         }
         int proxyResize = pCore->currentDoc()->getDocumentProperty(QStringLiteral("proxyresize")).toInt();
         parameter.replace(QStringLiteral("%width"), QString::number(proxyResize));
+        const auto fpsInfoMlt = pCore->getProjectFpsInfo();
+        parameter.replace(QStringLiteral("%projectFps"), QStringLiteral("%1/%2").arg(fpsInfoMlt.first).arg(fpsInfoMlt.second));
         if (parameter.contains(QLatin1String("-i "))) {
             // Remove the source input if any
             parameter.remove(QLatin1String("-i "));
@@ -368,6 +370,11 @@ void ProxyTask::run()
                 }
             }
             proxyParams.replace(QStringLiteral("%width"), QString::number(proxyResize));
+            // Nuldrums: proxy at PROJECT fps — a 60fps source in a 30fps project otherwise decodes
+            // two proxy frames per output frame, which alone is the difference between a locked
+            // 33.3ms monitor and ~40ms. Frame-exact for the timeline (1 proxy frame per project frame).
+            const auto fpsInfo = pCore->getProjectFpsInfo();
+            proxyParams.replace(QStringLiteral("%projectFps"), QStringLiteral("%1/%2").arg(fpsInfo.first).arg(fpsInfo.second));
             bool disableAutorotate = binClip->getProducerProperty(QStringLiteral("autorotate")) == QLatin1String("0");
             if (disableAutorotate || proxyParams.contains(QStringLiteral("-noautorotate"))) {
                 // The noautorotate flag must be passed before input source

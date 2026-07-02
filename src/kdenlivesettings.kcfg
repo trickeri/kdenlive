@@ -270,8 +270,9 @@
     </entry>
     <entry name="proxyscale" type="Int">
       <label>Default frame width for proxy clips.</label>
-      <!-- Nuldrums: 1280 (720p-class) = the measured sweet spot; 640 is visibly soft -->
-      <default>1280</default>
+      <!-- Nuldrums: 1920 + project-fps proxies = locked 30fps AND sharp preview (720p gets
+           visibly pixelated under zoom-in reframe rects; measured 2026-07-02) -->
+      <default>1920</default>
     </entry>
     <entry name="enforceLowerTrackCompositing" type="Bool">
       <label>Should the lower video track also be composited.</label>
