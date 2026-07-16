@@ -50,6 +50,9 @@ public Q_SLOTS:
     /** @brief Comma-separated clip ids on a video track (1-based from bottom). Always query this
      *  for LIVE clip ids — they are reassigned when a project is reloaded. */
     Q_SCRIPTABLE QString clipIdsOnTrack(int videoTrackIndex);
+    /** @brief Comma-separated clip ids on an AUDIO track (1-based from the top audio track).
+     *  Lets callers target individual voice tracks (e.g. per-track caption generation). */
+    Q_SCRIPTABLE QString audioClipIdsOnTrack(int audioTrackIndex);
     /** @brief Set a timeline clip's transform rect (x, y, w, h in project pixels). */
     Q_SCRIPTABLE bool setClipTransform(int clipId, int x, int y, int w, int h);
     /** @brief Make clipId the timeline selection (so selection-driven actions like

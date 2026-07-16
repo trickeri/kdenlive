@@ -5517,9 +5517,10 @@ struct CapWindow
     double cend;
     double posSec;
 };
-static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const std::vector<int> &segClips,
-                                      const QString &outWav, std::vector<CapWindow> &windows);
+static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const QList<int> &audioStreams,
+                                      const std::vector<int> &segClips, const QString &outWav, std::vector<CapWindow> &windows);
 static int mapConcatCaptions(const QString &inAss, const QString &outAss, const std::vector<CapWindow> &windows);
+static int filterCaptionsAgainstOccupied(const QString &inAss, const QString &outAss, const std::vector<std::pair<double, double>> &occupied);
 
 void MainWindow::slotGenerateKaraokeCaptions()
 {
@@ -5534,6 +5535,10 @@ void MainWindow::slotGenerateKaraokeCaptions()
     // The selected timeline clip segments to caption (captions are remapped onto exactly these,
     // so the user gets the one they selected — or all of them if several are selected).
     std::vector<int> segClips;
+    // The clip's ACTIVE audio streams (e.g. mic + AI voice, split onto separate audio
+    // tracks). We mix these together for transcription so captions cover every kept voice,
+    // not just the default stream. Empty -> legacy behaviour (default stream only).
+    QList<int> audioStreams;
     if (TimelineWidget *tl = getCurrentTimeline()) {
         int clipId = tl->controller()->getMainSelectedClip();
         if (clipId > -1) {
@@ -5551,6 +5556,28 @@ void MainWindow::slotGenerateKaraokeCaptions()
             }
             if (segClips.empty()) {
                 segClips.push_back(clipId);
+            }
+            // Which audio stream(s) to transcribe. If the user selected specific AUDIO clips
+            // (right-click Generate Captions on an individual audio track), caption EXACTLY
+            // those tracks' streams — so each voice track can be captioned on its own and the
+            // results appended. Only when a video clip is selected (nothing tells us a single
+            // track) do we fall back to all the source's active streams (the full voice mix,
+            // used by the auto vertical-short flow).
+            QList<int> pickedStreams;
+            for (int id : segClips) {
+                if (model->getClipState(id).first == PlaylistState::AudioOnly) {
+                    int s = model->data(model->makeClipIndexFromID(id), TimelineModel::AudioStreamRole).toInt();
+                    if (s >= 0 && !pickedStreams.contains(s)) {
+                        pickedStreams.append(s);
+                    }
+                }
+            }
+            if (!pickedStreams.isEmpty()) {
+                std::sort(pickedStreams.begin(), pickedStreams.end());
+                audioStreams = pickedStreams;
+            } else if (binClip) {
+                audioStreams = binClip->activeStreams().keys();
+                std::sort(audioStreams.begin(), audioStreams.end());
             }
         }
     }
@@ -5573,7 +5600,7 @@ void MainWindow::slotGenerateKaraokeCaptions()
     std::vector<CapWindow> windows;
     const QString keptWav = QDir::temp().absoluteFilePath(QStringLiteral("nulcaption-%1-kept.wav").arg(qHash(src)));
     if (!segClips.empty()) {
-        if (!buildKeptAudioForCaptions(getCurrentTimeline()->model(), src, segClips, keptWav, windows) || windows.empty()) {
+        if (!buildKeptAudioForCaptions(getCurrentTimeline()->model(), src, audioStreams, segClips, keptWav, windows) || windows.empty()) {
             pCore->displayMessage(i18n("Could not extract clip audio for captioning"), ErrorMessage);
             return;
         }
@@ -5612,6 +5639,39 @@ void MainWindow::slotGenerateKaraokeCaptions()
                             return;
                         }
                     }
+                    // Append-only: drop captions where the subtitle track is ALREADY occupied,
+                    // so running Generate Captions on another audio track only fills the gaps
+                    // (per-track captioning that accumulates, never overwrites what's there).
+                    std::vector<std::pair<double, double>> occupied;
+                    const double subFps = pCore->getCurrentFps();
+                    for (int sid : subModel->getAllSubIds()) {
+                        const double s0 = subModel->getSubtitlePosition(sid).seconds();
+                        const double e0 = s0 + subModel->getSubtitlePlaytime(sid) / subFps;
+                        if (e0 > s0) {
+                            occupied.emplace_back(s0, e0);
+                        }
+                    }
+                    if (!occupied.empty()) {
+                        const QString filtered = toImport + QStringLiteral(".flt.ass");
+                        const int kept = filterCaptionsAgainstOccupied(toImport, filtered, occupied);
+                        if (kept == 0) {
+                            pCore->displayMessage(i18n("Those moments are already captioned — nothing new to add"), OperationCompletedMessage);
+                            QFile::remove(filtered);
+                            if (toImport != assOut) {
+                                QFile::remove(toImport);
+                            }
+                            QFile::remove(assOut);
+                            QFile::remove(keptWav);
+                            job->deleteLater();
+                            return;
+                        }
+                        if (kept > 0) {
+                            if (toImport != assOut) {
+                                QFile::remove(toImport);
+                            }
+                            toImport = filtered;
+                        }
+                    }
                     // Snapshot existing ids so we can tag only the newly imported captions with
                     // their source clip binId (the "link subtitles to clips" link, stored in the
                     // ASS Effect field so it survives save/load).
@@ -5637,8 +5697,15 @@ void MainWindow::slotGenerateKaraokeCaptions()
                     }
                     pCore->displayMessage(i18n("Karaoke captions added to subtitle track"), OperationCompletedMessage);
                 } else {
+                    // nulcaption exits non-zero when Whisper finds no intelligible speech (e.g. a
+                    // laugh or a lone word). That's not a crash — report it gently and add nothing.
+                    const QString out = QString::fromUtf8(job->readAll());
                     pCore->displayMessage(QString(), OperationCompletedMessage); // dismiss the progress spinner
-                    pCore->displayMessage(i18n("Caption generation failed: %1", QString::fromUtf8(job->readAll())), ErrorMessage);
+                    if (out.contains(QStringLiteral("no speech"), Qt::CaseInsensitive)) {
+                        pCore->displayMessage(i18n("No speech found in the selected clip(s)"), OperationCompletedMessage);
+                    } else {
+                        pCore->displayMessage(i18n("Caption generation failed: %1", out), ErrorMessage);
+                    }
                 }
                 QFile::remove(assOut);
                 QFile::remove(keptWav);
@@ -5688,11 +5755,53 @@ static QString secondsToAssTimecode(double total)
     return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(s, 5, 'f', 2, QLatin1Char('0'));
 }
 
+// Copy @p inAss to @p outAss, dropping any Dialogue event whose [start,end] overlaps an already
+// captioned range in @p occupied (seconds). Lets the user run Generate Captions per audio track and
+// have each result APPEND only where nothing is captioned yet. Returns the Dialogue events kept.
+static int filterCaptionsAgainstOccupied(const QString &inAss, const QString &outAss, const std::vector<std::pair<double, double>> &occupied)
+{
+    QFile in(inAss);
+    QFile out(outAss);
+    if (!in.open(QIODevice::ReadOnly | QIODevice::Text) || !out.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return -1;
+    }
+    QTextStream rs(&in);
+    QTextStream ws(&out);
+    int kept = 0;
+    while (!rs.atEnd()) {
+        const QString line = rs.readLine();
+        if (!line.startsWith(QLatin1String("Dialogue:"))) {
+            ws << line << '\n'; // headers, styles, blank lines pass through untouched
+            continue;
+        }
+        const QStringList f = line.mid(9).split(QLatin1Char(',')); // "Dialogue:" == 9 chars
+        if (f.size() < 3) {
+            ws << line << '\n';
+            continue;
+        }
+        const double s = assTimecodeToSeconds(f.at(1).trimmed());
+        const double e = assTimecodeToSeconds(f.at(2).trimmed());
+        bool clash = false;
+        for (const auto &o : occupied) {
+            if (s < o.second && o.first < e) { // half-open overlap
+                clash = true;
+                break;
+            }
+        }
+        if (clash) {
+            continue; // already captioned here — skip
+        }
+        ws << line << '\n';
+        ++kept;
+    }
+    return kept;
+}
+
 // Extract ONLY the selected clips' source audio (the literal cut) into one WAV, in timeline order,
 // so nulcaption transcribes exactly what plays — short and accurate, no whole-file chunk drops.
 // Fills @p windows mapping concat-time -> timeline-time. Returns true on success.
-static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const std::vector<int> &segClips,
-                                      const QString &outWav, std::vector<CapWindow> &windows)
+static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &model, const QString &src, const QList<int> &audioStreams,
+                                      const std::vector<int> &segClips, const QString &outWav, std::vector<CapWindow> &windows)
 {
     const double fps = pCore->getCurrentFps();
     // Unique segments by (in,pos): the V1/V2/audio clips of one cut share in/pos/dur.
@@ -5732,9 +5841,30 @@ static bool buildKeptAudioForCaptions(const std::shared_ptr<TimelineItemModel> &
         const QString part = tmp.absoluteFilePath(QStringLiteral("nulcap-part-%1-%2.wav").arg(qHash(src)).arg(i));
         QProcess ff;
         // -ss before -i + re-encode to 16k mono PCM = sample-accurate audio extract of the cut.
-        ff.start(QStringLiteral("ffmpeg"), {QStringLiteral("-y"), QStringLiteral("-ss"), QString::number(segs[i].inSec, 'f', 3), QStringLiteral("-i"), src,
-                                            QStringLiteral("-t"), QString::number(segs[i].durSec, 'f', 3), QStringLiteral("-vn"), QStringLiteral("-ac"),
-                                            QStringLiteral("1"), QStringLiteral("-ar"), QStringLiteral("16000"), part});
+        QStringList ffArgs{QStringLiteral("-y"),
+                           QStringLiteral("-ss"),
+                           QString::number(segs[i].inSec, 'f', 3),
+                           QStringLiteral("-i"),
+                           src,
+                           QStringLiteral("-t"),
+                           QString::number(segs[i].durSec, 'f', 3)};
+        if (audioStreams.size() >= 2) {
+            // Mix the clip's active audio streams (mic + AI voice on separate tracks) so the
+            // transcription hears every kept voice. normalize=0 keeps each at full level (the
+            // voices rarely overlap) so a track that's quiet in a given cut isn't halved away.
+            QString fc;
+            for (int s : audioStreams) {
+                fc += QStringLiteral("[0:%1]").arg(s);
+            }
+            fc += QStringLiteral("amix=inputs=%1:normalize=0[a]").arg(audioStreams.size());
+            ffArgs << QStringLiteral("-filter_complex") << fc << QStringLiteral("-map") << QStringLiteral("[a]");
+        } else if (audioStreams.size() == 1) {
+            ffArgs << QStringLiteral("-map") << QStringLiteral("0:%1").arg(audioStreams.first());
+        } else {
+            ffArgs << QStringLiteral("-vn"); // no stream info -> default audio stream (legacy behaviour)
+        }
+        ffArgs << QStringLiteral("-ac") << QStringLiteral("1") << QStringLiteral("-ar") << QStringLiteral("16000") << part;
+        ff.start(QStringLiteral("ffmpeg"), ffArgs);
         ff.waitForFinished(120000);
         if (ff.exitStatus() != QProcess::NormalExit || ff.exitCode() != 0 || !QFile::exists(part)) {
             for (const QString &p : parts) {

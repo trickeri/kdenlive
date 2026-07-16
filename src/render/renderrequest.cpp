@@ -4,12 +4,14 @@
 */
 
 #include "renderrequest.h"
+#include "bin/model/subtitlemodel.hpp"
 #include "bin/projectitemmodel.h"
 #include "core.h"
 #include "doc/kdenlivedoc.h"
 #include "kdenlivesettings.h"
 #include "project/projectmanager.h"
 #include "renderpresets/renderpresetrepository.hpp"
+#include "timeline2/model/timelineitemmodel.hpp"
 #include "utils/qstringutils.h"
 #include "xml/xml.hpp"
 
@@ -147,6 +149,19 @@ std::vector<RenderRequest::RenderJob> RenderRequest::process()
     }
     bool modified = false;
 
+    // Word-clip / karaoke captions render from a compiled .ass that is regenerated per
+    // session and can be missing on disk at export time — libass then silently drops the
+    // whole subtitle filter, so captions vanish from the render while preview looks fine.
+    // Regenerate it now (from the live events) and point the filter at an absolute path
+    // before the tractor is serialized into the render playlist.
+    if (!m_embedSubtitles && project->hasSubtitles()) {
+        if (auto timeline = pCore->projectManager()->getTimeline()) {
+            if (timeline->hasSubtitleModel()) {
+                timeline->getSubtitleModel()->prepareRenderFile();
+            }
+        }
+    }
+
     std::pair<QString, QString> playlistContent = pCore->projectManager()->projectSceneList(
         project->url().adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash).toLocalFile(), false, m_overlayData, m_aspectRatio);
 
@@ -182,6 +197,12 @@ std::vector<RenderRequest::RenderJob> RenderRequest::process()
     if (m_embedSubtitles && project->hasSubtitles()) {
         // disable subtitle filter(s) as they will be embedded in a second step of rendering
         KdenliveDoc::disableSubtitles(doc);
+        modified = true;
+    } else if (project->hasSubtitles()) {
+        // Burn-in path: the render playlist lives in a temp dir, so make every subtitle
+        // path absolute — a relative av.filename otherwise fails to open (libass silently
+        // drops the filter) whenever the render's working dir / MLT root isn't the project.
+        KdenliveDoc::absolutizeSubtitles(doc, project->url().adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash).toLocalFile());
         modified = true;
     }
 

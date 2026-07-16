@@ -436,25 +436,35 @@ bool EffectStackModel::fromXml(const QDomElement &effectsXml, Fun &undo, Fun &re
         if (Xml::hasXmlProperty(node, QLatin1String("disable"))) {
             effectEnabled = Xml::getXmlProperty(node, QLatin1String("disable")).toInt() != 1;
         }
-        if (Xml::getXmlProperty(node, QLatin1String("kdenlive:builtin")).toInt() == 1) {
+        // Nuldrums fix: a built-in effect is identified by the *presence* of the
+        // kdenlive:builtin property, not its integer value. Copy serialization can emit
+        // this flag with an empty value (`<property name="kdenlive:builtin"/>`), so the
+        // old `.toInt() == 1` gate treated a copied built-in Transform as a plain effect
+        // and pasted a *second* qtblend on top of the existing (disabled/"locked out")
+        // built-in one instead of updating it. hasXmlProperty matches the existence-based
+        // check already used for the built-in fallback path below.
+        if (Xml::hasXmlProperty(node, QLatin1String("kdenlive:builtin"))) {
             if (!effectEnabled && !KdenliveSettings::enableBuiltInEffects()) {
                 continue;
             }
             // We are pasting a built in effect. Don't do a real paste, but copy the parameters to the existing effect
             // get all properties
-            bool disableFound = Xml::hasXmlProperty(node, QLatin1String("disable"));
             QDomNodeList props = node.elementsByTagName(QStringLiteral("property"));
             QVector<QPair<QString, QVariant>> effectProps;
             for (int j = 0; j < props.count(); ++j) {
                 QDomElement prop = props.item(j).toElement();
                 const QString propName = prop.attribute(QStringLiteral("name"));
+                // Don't copy the built-in marker or the enable flag as parameters: the marker
+                // can be empty (which would clear the destination's built-in status), and the
+                // enable state is applied explicitly via markEnabled() below.
+                if (propName == QLatin1String("kdenlive:builtin") || propName == QLatin1String("disable")) {
+                    continue;
+                }
                 effectProps.append({propName, prop.firstChild().nodeValue()});
             }
-            // Built-in effects are disabled by default. So when pasting an effect that
-            // is enabled, ensure we overwrite the disabled state
-            if (!disableFound && effectEnabled) {
-                effectProps.append({QStringLiteral("disable"), 0});
-            }
+            // Force the destination's enable flag to match the pasted effect's state so an
+            // enabled Transform actually applies (was the root of the "locked out" symptom).
+            effectProps.append({QStringLiteral("disable"), effectEnabled ? 0 : 1});
             if (effectProps.isEmpty()) {
                 // Effect without params, drop
                 continue;
@@ -630,6 +640,15 @@ bool EffectStackModel::copyEffectWithUndo(const std::shared_ptr<AbstractEffectIt
             destEffect->setParameters(sourceEffect->getAllParameters());
             if (!enabled) {
                 destEffect->filter().set("disable", 1);
+            } else {
+                // Nuldrums fix: pasting an *enabled* built-in effect (e.g. a Transform whose
+                // rect was tweaked) onto a clip whose built-in effect is still in the default
+                // *disabled* state must re-enable the destination. Otherwise the pasted
+                // parameters land on a disabled ("locked out"/greyed) transform and never
+                // apply — the symptom that used to force adding a second Transform effect.
+                // setAssetEnabled(true, true) clears the "disable" filter prop and refreshes
+                // the render + effect panel (mirrors setBuiltInRect's enable path).
+                destEffect->setAssetEnabled(true, true);
             }
             return true;
         }

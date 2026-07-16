@@ -252,6 +252,31 @@ QString KdenliveScript::clipIdsOnTrack(int videoTrackIndex)
     return ids.join(QLatin1Char(','));
 }
 
+QString KdenliveScript::audioClipIdsOnTrack(int audioTrackIndex)
+{
+    if (!pCore || !pCore->currentDoc()) {
+        return QString();
+    }
+    std::shared_ptr<TimelineItemModel> timeline = pCore->currentDoc()->getTimeline(pCore->currentTimelineId());
+    if (!timeline) {
+        return QString();
+    }
+    QList<int> aids = timeline->getTracksIds(true); // audio tracks
+    if (audioTrackIndex < 1 || audioTrackIndex > aids.size()) {
+        return QString();
+    }
+    // Audio tracks sit below the video tracks; number them 1..N from the TOP audio track
+    // (nearest the video) downward, so index 1 is A1 as shown in the UI.
+    std::sort(aids.begin(), aids.end(), [&timeline](int a, int b) { return timeline->getTrackPosition(a) > timeline->getTrackPosition(b); });
+    const int trackId = aids.at(audioTrackIndex - 1);
+    QStringList ids;
+    for (int c : timeline->getItemsInRange(trackId, 0, -1, false)) { // clips only (no compositions)
+        ids << QString::number(c);
+    }
+    nlog(QStringLiteral("audioClipIdsOnTrack(%1) -> [%2]").arg(audioTrackIndex).arg(ids.join(QLatin1Char(','))));
+    return ids.join(QLatin1Char(','));
+}
+
 bool KdenliveScript::setClipTransform(int clipId, int x, int y, int w, int h)
 {
     nlog(QStringLiteral("setClipTransform(clip=%1, %2 %3 %4 %5)").arg(clipId).arg(x).arg(y).arg(w).arg(h));

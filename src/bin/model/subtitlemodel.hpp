@@ -319,6 +319,13 @@ public:
      *  when there are no word groups. */
     QString compileKaraoke(const QString &editFile);
 
+    /** @brief Prepare the subtitle for rendering: regenerate the karaoke render .ass from
+     *  the current in-memory events (a no-op for ordinary subtitles) and point the burn-in
+     *  filter at its ABSOLUTE path. Guards exports against a stale/missing compiled file,
+     *  which otherwise makes libass silently drop the whole subtitle filter. Returns the
+     *  absolute render path, or empty when there is nothing to render. */
+    QString prepareRenderFile();
+
 public Q_SLOTS:
     /** @brief Function that parses through a subtitle file */
     void parseSubtitle(const QString &workPath);

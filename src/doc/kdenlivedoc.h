@@ -299,6 +299,10 @@ public:
     static void processProxyNodes(QDomNodeList producers, const QString &root, const QMap<QString, QString> &proxies);
     /** @brief Disable all subtitle filters of @param doc */
     static void disableSubtitles(QDomDocument &doc);
+    /** @brief Rewrite every subtitle filter's relative av.filename in @param doc to an
+     *  absolute path under @param root, so an export run from a temp playlist can always
+     *  open the .ass (a relative path otherwise makes libass silently drop the filter). */
+    static void absolutizeSubtitles(QDomDocument &doc, const QString &root);
     /** @brief Sets the color of the first producer in @param doc with id "black_track" to transparent */
     static void makeBackgroundTrackTransparent(QDomDocument &doc);
     /** @brief Set the autoclose attribute to all playlists in @param doc.

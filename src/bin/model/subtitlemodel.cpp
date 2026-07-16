@@ -18,6 +18,7 @@
 #include <KLocalizedString>
 #include <KMessageBox>
 #include <QApplication>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1629,6 +1630,27 @@ QString SubtitleModel::compileKaraoke(const QString &editFile)
     }
     outF.close();
     return outPath;
+}
+
+QString SubtitleModel::prepareRenderFile()
+{
+    if (m_subtitleList.empty()) {
+        return {};
+    }
+    // The master (editable) .ass for the active subtitle slot — the same path
+    // jsontoSubtitle() writes to. compileKaraoke() derives its render file from this.
+    int ix = pCore->currentDoc()->getSequenceProperty(m_timeline->uuid(), QStringLiteral("kdenlive:activeSubtitleIndex"), QStringLiteral("0")).toInt();
+    const QString masterFile = pCore->currentDoc()->subTitlePath(m_timeline->uuid(), ix, false);
+    if (masterFile.isEmpty()) {
+        return {};
+    }
+    // Rebuild the karaoke render .ass from the current in-memory events (no-op / returns
+    // masterFile for ordinary subtitles) so the file the export reads is guaranteed to
+    // exist and be current, then pin the filter to its absolute path.
+    const QString renderFile = compileKaraoke(masterFile);
+    const QString absPath = QFileInfo(renderFile).absoluteFilePath();
+    m_subtitleFilter->set("av.filename", absPath.toUtf8().constData());
+    return absPath;
 }
 
 void SubtitleModel::jsontoSubtitle(const QJsonArray &data)

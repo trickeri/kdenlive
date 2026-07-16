@@ -2813,6 +2813,24 @@ void KdenliveDoc::disableSubtitles(QDomDocument &doc)
     }
 }
 
+void KdenliveDoc::absolutizeSubtitles(QDomDocument &doc, const QString &root)
+{
+    if (root.isEmpty()) {
+        return;
+    }
+    const QDir dir(root);
+    QDomNodeList filters = doc.elementsByTagName(QStringLiteral("filter"));
+    for (int i = 0; i < filters.length(); ++i) {
+        auto filter = filters.at(i).toElement();
+        if (Xml::getXmlProperty(filter, QStringLiteral("mlt_service")) == QLatin1String("avfilter.subtitles")) {
+            const QString fileName = Xml::getXmlProperty(filter, QStringLiteral("av.filename"));
+            if (!fileName.isEmpty() && QFileInfo(fileName).isRelative()) {
+                Xml::setXmlProperty(filter, QStringLiteral("av.filename"), dir.absoluteFilePath(fileName));
+            }
+        }
+    }
+}
+
 void KdenliveDoc::makeBackgroundTrackTransparent(QDomDocument &doc)
 {
     QDomNodeList prods = doc.elementsByTagName(QStringLiteral("producer"));
